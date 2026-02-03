@@ -12,6 +12,7 @@ import net.minecraft.client.multiplayer.ServerList;
 import net.minecraft.network.chat.Component;
 import net.neoforged.api.distmarker.Dist;
 import net.neoforged.fml.common.EventBusSubscriber;
+import net.neoforged.fml.ModList;
 import net.neoforged.neoforge.client.event.ScreenEvent.Init.Post;
 import net.neoforged.bus.api.SubscribeEvent;
 import org.slf4j.Logger;
@@ -22,6 +23,7 @@ import java.io.InputStream;
 import java.net.HttpURLConnection;
 import java.net.URI;
 import java.net.URL;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
@@ -41,6 +43,7 @@ import java.util.zip.ZipFile;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
 import com.moandjiezana.toml.Toml;
+import org.json.JSONArray;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 
@@ -50,6 +53,7 @@ public class ClientEventHandlers {
     private static final int CONNECTION_TIMEOUT_MS = 5000;
     private static final String MOD_ZIP_NAME = "mods.zip";
     private static final String CONFIG_ZIP_NAME = "config.zip";
+    private static final String MODS_REMOVE_LIST_NAME = "modsToRemoveFromTheClient.json";
     private static final Path MOD_DOWNLOAD_PATH = Path.of("MMMMM/shared-files", MOD_ZIP_NAME);
     private static final Path MOD_UNZIP_DESTINATION = Path.of("mods");
     private static final Path MOD_CHECKSUM_FILE = Path.of("MMMMM/mods_checksums.json");
@@ -172,6 +176,8 @@ public class ClientEventHandlers {
         UpdateOutcome modsOutcome = UpdateOutcome.failed();
         UpdateOutcome configOutcome = Config.updateConfig ? UpdateOutcome.failed() : UpdateOutcome.success(null);
         boolean cancelled = false;
+        List<String> summaryExtras = new ArrayList<>();
+        String currentModVersion = getCurrentModVersion();
 
         try {
             LOGGER.info("Starting mod download from: {}", modsUrl);
@@ -184,7 +190,9 @@ public class ClientEventHandlers {
                     MOD_DOWNLOAD_PATH,
                     MOD_UNZIP_DESTINATION,
                     MOD_CHECKSUM_FILE,
-                    true
+                    true,
+                    currentModVersion,
+                    summaryExtras
             );
 
             if (modsOutcome.isCancelled()) {
@@ -201,7 +209,7 @@ public class ClientEventHandlers {
             }
         } catch (Exception e) {
             LOGGER.error("Failed to download or extract mods", e);
-            UpdateSummary summary = buildUpdateSummary(updateBaseUrl, modsOutcome, configOutcome, true);
+            UpdateSummary summary = buildUpdateSummary(updateBaseUrl, modsOutcome, configOutcome, true, summaryExtras);
             minecraft.execute(() -> progressScreen.showSummary(summary.title, summary.lines));
             sendPlayerMessages(minecraft, summary.lines);
             return;
@@ -215,7 +223,7 @@ public class ClientEventHandlers {
             return;
         }
 
-        UpdateSummary summary = buildUpdateSummary(updateBaseUrl, modsOutcome, configOutcome, false);
+        UpdateSummary summary = buildUpdateSummary(updateBaseUrl, modsOutcome, configOutcome, false, summaryExtras);
         minecraft.execute(() -> progressScreen.showSummary(summary.title, summary.lines));
         sendPlayerMessages(minecraft, summary.lines);
     }
@@ -241,7 +249,9 @@ public class ClientEventHandlers {
                     CONFIG_DOWNLOAD_PATH,
                     CONFIG_UNZIP_DESTINATION,
                     CONFIG_CHECKSUM_FILE,
-                    false
+                    false,
+                    null,
+                    null
             );
         } catch (Exception e) {
             LOGGER.error("Failed to download or extract config", e);
@@ -287,7 +297,9 @@ public class ClientEventHandlers {
             Path downloadPath,
             Path unzipDestination,
             Path checksumFile,
-            boolean syncModsById
+            boolean syncModsById,
+            String currentModVersion,
+            List<String> summaryExtras
     ) throws Exception {
         minecraft.execute(() -> progressScreen.startNewDownload(displayName, downloadUrl));
 
@@ -305,7 +317,13 @@ public class ClientEventHandlers {
         Set<String> extractedFiles = null;
         if (syncModsById) {
             LOGGER.info("Using modId sync extraction for {}", displayName);
-            extractedFiles = extractModsZipFileWithModIdSync(downloadPath, unzipDestination, progressScreen);
+            extractedFiles = extractModsZipFileWithModIdSync(
+                    downloadPath,
+                    unzipDestination,
+                    progressScreen,
+                    currentModVersion,
+                    summaryExtras
+            );
         } else {
             extractedFiles = extractZipFile(downloadPath, unzipDestination, progressScreen, displayName, "config/");
         }
@@ -509,12 +527,16 @@ public class ClientEventHandlers {
     private static Set<String> extractModsZipFileWithModIdSync(
             Path zipPath,
             Path destination,
-            DownloadProgressScreen progressScreen
+            DownloadProgressScreen progressScreen,
+            String currentModVersion,
+            List<String> summaryExtras
     ) throws Exception {
         Map<String, List<Path>> existingModsById = indexInstalledModsById(destination, progressScreen);
         LOGGER.info("Indexed {} modIds in {}", existingModsById.size(), destination);
 
         Set<String> extractedFiles = new HashSet<>();
+        List<String> modsToRemove = new ArrayList<>();
+        boolean warnedSelfUpdate = false;
         try (ZipFile zipFile = new ZipFile(zipPath.toFile())) {
             List<? extends ZipEntry> entries = Collections.list(zipFile.entries());
             int total = entries.size();
@@ -523,6 +545,10 @@ public class ClientEventHandlers {
             for (ZipEntry entry : entries) {
                 current++;
                 String entryName = entry.getName();
+                if (MODS_REMOVE_LIST_NAME.equals(entryName)) {
+                    modsToRemove = parseModsRemovalList(zipFile, entry);
+                    continue;
+                }
                 Path entryPath = destination.resolve(entryName).normalize();
                 if (!entryPath.startsWith(destination)) {
                     throw new IOException("Blocked zip entry outside destination: " + entryName);
@@ -549,7 +575,9 @@ public class ClientEventHandlers {
                     }
 
                     try {
-                        Set<String> modIds = getModIdsFromJarBytes(jarBytes);
+                        Toml toml = readTomlFromJarBytes(jarBytes);
+                        Set<String> modIds = extractModIdsFromToml(toml);
+                        Map<String, String> modVersions = extractModVersionsFromToml(toml);
                         if (modIds.isEmpty()) {
                             LOGGER.warn("Could not identify modId for {} - extracting without duplicate cleanup.", entryName);
                         } else {
@@ -578,6 +606,22 @@ public class ClientEventHandlers {
                                 existingModsById.put(modId, new ArrayList<>(List.of(entryPath)));
                             }
                         }
+
+                        if (!warnedSelfUpdate && summaryExtras != null) {
+                            String zipVersion = modVersions.get(MMMMM.MODID);
+                            if (zipVersion != null
+                                    && currentModVersion != null
+                                    && !currentModVersion.isBlank()
+                                    && !"unknown".equalsIgnoreCase(currentModVersion)
+                                    && !zipVersion.contains("${")) {
+                                int comparison = compareVersions(zipVersion, currentModVersion);
+                                if (comparison != 0) {
+                                    summaryExtras.add("Warning: mods.zip contains MMMMM " + zipVersion
+                                            + " (current: " + currentModVersion + "). It will overwrite on disk and apply after restart.");
+                                    warnedSelfUpdate = true;
+                                }
+                            }
+                        }
                     } catch (Exception e) {
                         LOGGER.warn("Failed to identify modId for {} - extracting without duplicate cleanup.", entryName, e);
                     }
@@ -589,6 +633,22 @@ public class ClientEventHandlers {
                         Files.copy(is, entryPath, StandardCopyOption.REPLACE_EXISTING);
                     }
                     extractedFiles.add(entryName.replace('\\', '/'));
+                }
+            }
+        }
+
+        if (!modsToRemove.isEmpty()) {
+            updateProcessing(progressScreen, "Removing mods...", "Applying " + MODS_REMOVE_LIST_NAME, 0, false);
+            RemovalResult removal = removeModsByName(destination, modsToRemove, progressScreen);
+            if (summaryExtras != null) {
+                if (!removal.removed.isEmpty()) {
+                    summaryExtras.add("Mods removed by list: " + String.join(", ", removal.removed));
+                }
+                if (!removal.missing.isEmpty()) {
+                    summaryExtras.add("Mods not found for removal: " + String.join(", ", removal.missing));
+                }
+                if (!removal.invalid.isEmpty()) {
+                    summaryExtras.add("Invalid entries in " + MODS_REMOVE_LIST_NAME + ": " + String.join(", ", removal.invalid));
                 }
             }
         }
@@ -658,7 +718,7 @@ public class ClientEventHandlers {
         }
     }
 
-    private static Set<String> getModIdsFromJarBytes(byte[] jarBytes) throws Exception {
+    private static Toml readTomlFromJarBytes(byte[] jarBytes) throws Exception {
         try (ZipInputStream jarZip = new ZipInputStream(new ByteArrayInputStream(jarBytes))) {
             ZipEntry jarEntry;
             while ((jarEntry = jarZip.getNextEntry()) != null) {
@@ -667,13 +727,12 @@ public class ClientEventHandlers {
                         && ("META-INF/neoforge.mods.toml".equals(name) || "META-INF/mods.toml".equals(name))) {
                     ByteArrayOutputStream baos = new ByteArrayOutputStream();
                     jarZip.transferTo(baos);
-                    Toml toml = new Toml().read(new ByteArrayInputStream(baos.toByteArray()));
-                    return extractModIdsFromToml(toml);
+                    return new Toml().read(new ByteArrayInputStream(baos.toByteArray()));
                 }
                 jarZip.closeEntry();
             }
         }
-        return Collections.emptySet();
+        return null;
     }
 
     private static Set<String> extractModIdsFromToml(Toml toml) {
@@ -695,11 +754,32 @@ public class ClientEventHandlers {
         return modIds;
     }
 
+    private static Map<String, String> extractModVersionsFromToml(Toml toml) {
+        if (toml == null) {
+            return Collections.emptyMap();
+        }
+
+        Map<String, String> versions = new HashMap<>();
+        List<Toml> modsTables = toml.getTables("mods");
+        if (modsTables != null) {
+            for (Toml modTable : modsTables) {
+                String modId = modTable.getString("modId");
+                String version = modTable.getString("version");
+                if (modId != null && !modId.isBlank() && version != null && !version.isBlank()) {
+                    versions.put(modId.toLowerCase(Locale.ROOT), version.trim());
+                }
+            }
+        }
+
+        return versions;
+    }
+
     private static UpdateSummary buildUpdateSummary(
             String updateBaseUrl,
             UpdateOutcome modsOutcome,
             UpdateOutcome configOutcome,
-            boolean failedEarly
+            boolean failedEarly,
+            List<String> summaryExtras
     ) {
         List<String> lines = new ArrayList<>();
         boolean configAttempted = Config.updateConfig;
@@ -732,6 +812,10 @@ public class ClientEventHandlers {
             lines.add("Mods were updated. Please restart the game to apply them.");
         } else if (!modsChanged && !configChanged && !failedEarly && modsSuccess && configSuccess) {
             lines.add("No updates found.");
+        }
+
+        if (summaryExtras != null && !summaryExtras.isEmpty()) {
+            lines.addAll(summaryExtras);
         }
 
         return new UpdateSummary(title, lines);
@@ -817,6 +901,169 @@ public class ClientEventHandlers {
             return;
         }
         minecraft.execute(() -> progressScreen.updateProcessing(title, detail, progress, hasProgress));
+    }
+
+    private static List<String> parseModsRemovalList(ZipFile zipFile, ZipEntry entry) {
+        try (InputStream is = zipFile.getInputStream(entry)) {
+            String content = new String(is.readAllBytes(), StandardCharsets.UTF_8);
+            JSONArray array = new JSONArray(content);
+            List<String> items = new ArrayList<>();
+            for (int i = 0; i < array.length(); i++) {
+                String value = array.optString(i, "").trim();
+                if (!value.isBlank()) {
+                    items.add(value);
+                }
+            }
+            return items;
+        } catch (Exception e) {
+            LOGGER.warn("Failed to parse {}", MODS_REMOVE_LIST_NAME, e);
+            return List.of();
+        }
+    }
+
+    private static RemovalResult removeModsByName(
+            Path modsDirectory,
+            List<String> rawNames,
+            DownloadProgressScreen progressScreen
+    ) {
+        if (rawNames == null || rawNames.isEmpty()) {
+            return new RemovalResult(List.of(), List.of(), List.of());
+        }
+
+        Map<String, String> requested = new HashMap<>();
+        List<String> invalid = new ArrayList<>();
+        for (String name : rawNames) {
+            String normalized = normalizeFileName(name);
+            if (normalized.isBlank() || !normalized.toLowerCase(Locale.ROOT).endsWith(".jar")) {
+                invalid.add(name);
+                continue;
+            }
+            requested.putIfAbsent(normalized.toLowerCase(Locale.ROOT), normalized);
+        }
+
+        if (requested.isEmpty()) {
+            return new RemovalResult(List.of(), List.of(), invalid);
+        }
+
+        List<String> removed = new ArrayList<>();
+        List<String> missing;
+        Set<String> removedLower = new HashSet<>();
+
+        int current = 0;
+        try (var stream = Files.walk(modsDirectory)) {
+            var iterator = stream.filter(Files::isRegularFile).iterator();
+            while (iterator.hasNext()) {
+                Path path = iterator.next();
+                current++;
+                String fileName = path.getFileName().toString();
+                updateProcessing(progressScreen, "Removing mods...", "Checked " + current + ": " + fileName, 0, false);
+
+                String key = fileName.toLowerCase(Locale.ROOT);
+                if (requested.containsKey(key)) {
+                    try {
+                        if (Files.deleteIfExists(path)) {
+                            removed.add(fileName);
+                            removedLower.add(key);
+                        }
+                    } catch (Exception e) {
+                        LOGGER.warn("Failed to remove mod {}", fileName, e);
+                    }
+                }
+            }
+        } catch (Exception e) {
+            LOGGER.warn("Failed to remove mods listed in {}", MODS_REMOVE_LIST_NAME, e);
+        }
+
+        missing = requested.entrySet().stream()
+                .filter(entry -> !removedLower.contains(entry.getKey()))
+                .map(Map.Entry::getValue)
+                .collect(Collectors.toList());
+
+        return new RemovalResult(removed, missing, invalid);
+    }
+
+    private static String normalizeFileName(String name) {
+        if (name == null) {
+            return "";
+        }
+        String trimmed = name.trim().replace('\\', '/');
+        int lastSlash = trimmed.lastIndexOf('/');
+        if (lastSlash >= 0) {
+            trimmed = trimmed.substring(lastSlash + 1);
+        }
+        return trimmed.trim();
+    }
+
+    private static String getCurrentModVersion() {
+        return ModList.get()
+                .getModContainerById(MMMMM.MODID)
+                .map(container -> container.getModInfo().getVersion().toString())
+                .orElse("unknown");
+    }
+
+    private static int compareVersions(String left, String right) {
+        if (left == null || right == null) {
+            return 0;
+        }
+        String a = normalizeVersion(left);
+        String b = normalizeVersion(right);
+        if (a.isBlank() || b.isBlank()) {
+            return 0;
+        }
+
+        String[] aParts = a.split("[^0-9A-Za-z]+");
+        String[] bParts = b.split("[^0-9A-Za-z]+");
+        int len = Math.max(aParts.length, bParts.length);
+        for (int i = 0; i < len; i++) {
+            String ap = i < aParts.length ? aParts[i] : "0";
+            String bp = i < bParts.length ? bParts[i] : "0";
+            boolean an = ap.chars().allMatch(Character::isDigit);
+            boolean bn = bp.chars().allMatch(Character::isDigit);
+
+            if (an && bn) {
+                long av = parseLongSafe(ap);
+                long bv = parseLongSafe(bp);
+                if (av != bv) {
+                    return Long.compare(av, bv);
+                }
+            } else if (an != bn) {
+                return an ? 1 : -1;
+            } else {
+                int cmp = ap.compareToIgnoreCase(bp);
+                if (cmp != 0) {
+                    return cmp;
+                }
+            }
+        }
+        return 0;
+    }
+
+    private static String normalizeVersion(String version) {
+        String normalized = version.trim();
+        if (normalized.startsWith("v") || normalized.startsWith("V")) {
+            normalized = normalized.substring(1);
+        }
+        return normalized;
+    }
+
+    private static long parseLongSafe(String value) {
+        try {
+            return Long.parseLong(value);
+        } catch (NumberFormatException e) {
+            return 0;
+        }
+    }
+
+    private static final class RemovalResult {
+        private final List<String> removed;
+        private final List<String> missing;
+        private final List<String> invalid;
+
+        private RemovalResult(List<String> removed, List<String> missing, List<String> invalid) {
+            this.removed = removed;
+            this.missing = missing;
+            this.invalid = invalid;
+        }
     }
 
     private static Checksum.ChecksumDiff computeAndSaveChecksumsFromZip(

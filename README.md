@@ -23,6 +23,8 @@ Server usage
 Notes:
 - The commands bundle *all* mods/configs at once. You can also create `mods.zip`
   and `config.zip` manually if you want to ship only specific files.
+- You can also include an optional `modsToRemoveFromTheClient.json` inside `mods.zip`
+  to delete specific jars from the client.
 
 Client usage
 ------------
@@ -44,7 +46,21 @@ How updates work
 - The client downloads `mods.zip` and extracts it into `/mods`.
 - For each .jar, the mod reads its `modId` and removes any older version of the same mod,
   even if the filename is different.
+- If `modsToRemoveFromTheClient.json` exists in `mods.zip`, any jar listed there is
+  removed from `/mods` during the update.
 - If `updateConfig=true`, it also downloads `config.zip` and extracts it into `/config`.
+
+Removal list format
+-------------------
+Create `modsToRemoveFromTheClient.json` inside `mods.zip` with a plain JSON array
+of jar file names:
+
+```json
+[
+  "banana1.jar",
+  "banana2.jar"
+]
+```
 
 Tips / Troubleshooting
 ----------------------
