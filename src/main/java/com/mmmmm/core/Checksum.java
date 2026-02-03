@@ -12,6 +12,7 @@ import java.util.Collections;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
+import java.util.Locale;
 import java.util.stream.Collectors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -87,14 +88,28 @@ public class Checksum {
     public static String computeChecksum(Path filePath) throws Exception {
         MessageDigest digest = MessageDigest.getInstance("SHA-256");
         try (var in = Files.newInputStream(filePath)) {
-            byte[] buffer = new byte[8192];
-            int read;
-            while ((read = in.read(buffer)) != -1) {
-                digest.update(buffer, 0, read);
-            }
+            return computeChecksum(in, digest);
+        }
+    }
+
+    public static String computeChecksum(java.io.InputStream inputStream) throws Exception {
+        MessageDigest digest = MessageDigest.getInstance("SHA-256");
+        return computeChecksum(inputStream, digest);
+    }
+
+    private static String computeChecksum(java.io.InputStream inputStream, MessageDigest digest) throws Exception {
+        byte[] buffer = new byte[8192];
+        int read;
+        while ((read = inputStream.read(buffer)) != -1) {
+            digest.update(buffer, 0, read);
         }
         byte[] hashBytes = digest.digest();
         return HexFormat.of().formatHex(hashBytes);
+    }
+
+    private static String toRelativeKey(Path root, Path file) {
+        String relative = root.relativize(file).toString();
+        return relative.replace('\\', '/');
     }
 
     public static void saveChecksums(Path targetDirectory, Path checksumFile) throws Exception {
@@ -117,6 +132,109 @@ public class Checksum {
         Map<String, String> oldChecksums = loadChecksums(checksumFile);
         Map<String, String> newChecksums = computeChecksums(targetDirectory, listener);
         ChecksumDiff diff = buildDiff(oldChecksums, newChecksums);
+        logDiff(diff);
+        return new ChecksumResult(diff, newChecksums);
+    }
+
+    public static ChecksumResult compareChecksums(Path checksumFile, Map<String, String> newChecksums) throws Exception {
+        Map<String, String> oldChecksums = loadChecksums(checksumFile);
+        ChecksumDiff diff = buildDiff(oldChecksums, newChecksums);
+        logDiff(diff);
+        return new ChecksumResult(diff, newChecksums);
+    }
+
+    public static ChecksumResult compareChecksumsForPaths(
+            Path targetDirectory,
+            Path checksumFile,
+            ProgressListener listener,
+            java.util.Collection<String> relativePaths
+    ) throws Exception {
+        Map<String, String> oldChecksums = loadChecksums(checksumFile);
+        if (relativePaths == null || relativePaths.isEmpty()) {
+            if (listener != null) {
+                listener.onProgress(0, 0, "No files found");
+            }
+            ChecksumDiff diff = buildDiff(Map.of(), Map.of());
+            logDiff(diff);
+            return new ChecksumResult(diff, Map.of());
+        }
+
+        List<String> sorted = new ArrayList<>(relativePaths);
+        Collections.sort(sorted, String.CASE_INSENSITIVE_ORDER);
+
+        Map<String, String> filteredOld = oldChecksums.entrySet().stream()
+                .filter(entry -> relativePaths.contains(entry.getKey()))
+                .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
+
+        Map<String, String> newChecksums = new java.util.LinkedHashMap<>();
+        int total = sorted.size();
+        int current = 0;
+        for (String rel : sorted) {
+            current++;
+            if (listener != null) {
+                listener.onProgress(current, total, rel);
+            }
+            Path resolved = targetDirectory.resolve(rel).normalize();
+            if (!resolved.startsWith(targetDirectory) || !Files.isRegularFile(resolved)) {
+                continue;
+            }
+            try {
+                newChecksums.put(rel, computeChecksum(resolved));
+            } catch (Exception e) {
+                throw new RuntimeException(e);
+            }
+        }
+
+        ChecksumDiff diff = buildDiff(filteredOld, newChecksums);
+        logDiff(diff);
+        return new ChecksumResult(diff, newChecksums);
+    }
+
+    public static ChecksumResult compareChecksumsFlat(
+            Path targetDirectory,
+            Path checksumFile,
+            ProgressListener listener,
+            java.util.function.Predicate<Path> fileFilter
+    ) throws Exception {
+        Map<String, String> oldChecksums = loadChecksums(checksumFile);
+        Map<String, String> filteredOld = oldChecksums.entrySet().stream()
+                .filter(entry -> entry.getKey().toLowerCase(Locale.ROOT).endsWith(".jar")
+                        && !entry.getKey().contains("/"))
+                .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
+
+        List<Path> files;
+        try (var stream = Files.list(targetDirectory)) {
+            files = stream
+                    .filter(Files::isRegularFile)
+                    .filter(path -> fileFilter == null || fileFilter.test(path))
+                    .collect(Collectors.toList());
+        }
+
+        int total = files.size();
+        if (listener != null) {
+            if (total == 0) {
+                listener.onProgress(0, 0, "No files found");
+            } else {
+                listener.onProgress(0, total, "Starting...");
+            }
+        }
+
+        Map<String, String> newChecksums = new java.util.LinkedHashMap<>();
+        int current = 0;
+        for (Path path : files) {
+            current++;
+            String key = toRelativeKey(targetDirectory, path);
+            if (listener != null) {
+                listener.onProgress(current, total, key);
+            }
+            try {
+                newChecksums.put(key, computeChecksum(path));
+            } catch (Exception e) {
+                throw new RuntimeException(e);
+            }
+        }
+
+        ChecksumDiff diff = buildDiff(filteredOld, newChecksums);
         logDiff(diff);
         return new ChecksumResult(diff, newChecksums);
     }
@@ -160,27 +278,22 @@ public class Checksum {
 
     private static Map<String, String> computeChecksums(Path targetDirectory, ProgressListener listener) throws Exception {
         if (listener == null) {
-            List<Path> files;
-            try (var stream = Files.list(targetDirectory)) {
-                files = stream
-                        .filter(Files::isRegularFile)
-                        .collect(Collectors.toList());
-            }
-
             Map<String, String> checksums = new java.util.LinkedHashMap<>();
-            for (Path path : files) {
-                try {
-                    checksums.put(path.getFileName().toString(), computeChecksum(path));
-                } catch (Exception e) {
-                    throw new RuntimeException(e);
-                }
+            try (var stream = Files.walk(targetDirectory)) {
+                stream.filter(Files::isRegularFile).forEach(path -> {
+                    try {
+                        checksums.put(toRelativeKey(targetDirectory, path), computeChecksum(path));
+                    } catch (Exception e) {
+                        throw new RuntimeException(e);
+                    }
+                });
             }
             return checksums;
         }
 
         Map<String, String> checksums = new java.util.LinkedHashMap<>();
         int current = 0;
-        try (var stream = Files.list(targetDirectory)) {
+        try (var stream = Files.walk(targetDirectory)) {
             var iterator = stream.filter(Files::isRegularFile).iterator();
             if (!iterator.hasNext()) {
                 listener.onProgress(0, 0, "No files found");
@@ -191,9 +304,10 @@ public class Checksum {
             while (iterator.hasNext()) {
                 Path path = iterator.next();
                 current++;
-                listener.onProgress(current, -1, path.getFileName().toString());
+                String key = toRelativeKey(targetDirectory, path);
+                listener.onProgress(current, -1, key);
                 try {
-                    checksums.put(path.getFileName().toString(), computeChecksum(path));
+                    checksums.put(key, computeChecksum(path));
                 } catch (Exception e) {
                     throw new RuntimeException(e);
                 }

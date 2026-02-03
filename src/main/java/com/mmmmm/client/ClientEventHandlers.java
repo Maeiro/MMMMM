@@ -27,7 +27,6 @@ import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.nio.file.StandardOpenOption;
 import java.util.Collections;
-import java.util.Enumeration;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.ArrayList;
@@ -306,17 +305,29 @@ public class ClientEventHandlers {
         Set<String> extractedFiles = null;
         if (syncModsById) {
             LOGGER.info("Using modId sync extraction for {}", displayName);
-            extractModsZipFileWithModIdSync(downloadPath, unzipDestination, progressScreen);
+            extractedFiles = extractModsZipFileWithModIdSync(downloadPath, unzipDestination, progressScreen);
         } else {
-            extractedFiles = extractZipFile(downloadPath, unzipDestination, progressScreen, displayName);
+            extractedFiles = extractZipFile(downloadPath, unzipDestination, progressScreen, displayName, "config/");
         }
-        Checksum.ChecksumDiff diff = computeAndSaveChecksums(
-                unzipDestination,
-                checksumFile,
-                progressScreen,
-                displayName,
-                extractedFiles
-        );
+        Checksum.ChecksumDiff diff;
+        if (!syncModsById) {
+            diff = computeAndSaveChecksumsFromZip(
+                    downloadPath,
+                    checksumFile,
+                    progressScreen,
+                    displayName,
+                    "config/"
+            );
+        } else {
+            diff = computeAndSaveChecksums(
+                    unzipDestination,
+                    checksumFile,
+                    progressScreen,
+                    displayName,
+                    extractedFiles,
+                    syncModsById
+            );
+        }
         return UpdateOutcome.success(diff);
     }
 
@@ -418,22 +429,33 @@ public class ClientEventHandlers {
             Path checksumFile,
             DownloadProgressScreen progressScreen,
             String displayName,
-            Set<String> filterFiles
+            Set<String> filterFiles,
+            boolean jarOnly
     ) throws Exception {
         LOGGER.info("Comparing checksums...");
         updateProcessing(progressScreen, "Comparing " + displayName + " checksums...", "Scanning files...", 0, false);
-        Checksum.ChecksumResult result = Checksum.compareChecksums(
-                targetDirectory,
-                checksumFile,
-                (current, total, fileName) -> {
-                    boolean hasTotal = total > 0;
-                    int progress = hasTotal ? (int) ((current * 100L) / total) : 0;
-                    String detail = hasTotal
-                            ? String.format("%d/%d: %s", current, total, fileName)
-                            : String.format("%d files... %s", current, fileName);
-                    updateProcessing(progressScreen, "Comparing " + displayName + " checksums...", detail, progress, total > 0);
-                }
-        );
+        Checksum.ProgressListener listener = (current, total, fileName) -> {
+            boolean hasTotal = total > 0;
+            int progress = hasTotal ? (int) ((current * 100L) / total) : 0;
+            String detail = hasTotal
+                    ? String.format("%d/%d: %s", current, total, fileName)
+                    : String.format("%d files... %s", current, fileName);
+            updateProcessing(progressScreen, "Comparing " + displayName + " checksums...", detail, progress, total > 0);
+        };
+
+        Checksum.ChecksumResult result;
+        if (filterFiles != null) {
+            result = Checksum.compareChecksumsForPaths(targetDirectory, checksumFile, listener, filterFiles);
+        } else if (jarOnly) {
+            result = Checksum.compareChecksumsFlat(
+                    targetDirectory,
+                    checksumFile,
+                    listener,
+                    path -> path.toString().toLowerCase(Locale.ROOT).endsWith(".jar")
+            );
+        } else {
+            result = Checksum.compareChecksums(targetDirectory, checksumFile, listener);
+        }
         Checksum.saveChecksums(checksumFile, result.getNewChecksums());
         Checksum.ChecksumDiff diff = result.getDiff();
         if (filterFiles != null && !filterFiles.isEmpty()) {
@@ -446,7 +468,8 @@ public class ClientEventHandlers {
             Path zipPath,
             Path destination,
             DownloadProgressScreen progressScreen,
-            String displayName
+            String displayName,
+            String rootPrefixToStrip
     ) throws IOException {
         Set<String> extractedFiles = new HashSet<>();
         try (ZipFile zipFile = new ZipFile(zipPath.toFile())) {
@@ -455,7 +478,10 @@ public class ClientEventHandlers {
             int current = 0;
             for (ZipEntry entry : entries) {
                 current++;
-                String entryName = entry.getName();
+                String entryName = normalizeZipEntryName(entry.getName(), rootPrefixToStrip);
+                if (entryName.isBlank()) {
+                    continue;
+                }
                 int progress = total > 0 ? (int) ((current * 100L) / total) : 0;
                 String detail = total > 0
                         ? String.format("%d/%d: %s", current, total, entryName)
@@ -473,14 +499,14 @@ public class ClientEventHandlers {
                     try (InputStream is = zipFile.getInputStream(entry)) {
                         Files.copy(is, entryPath, StandardCopyOption.REPLACE_EXISTING);
                     }
-                    extractedFiles.add(entryPath.getFileName().toString());
+                    extractedFiles.add(entryName.replace('\\', '/'));
                 }
             }
         }
         return extractedFiles;
     }
 
-    private static void extractModsZipFileWithModIdSync(
+    private static Set<String> extractModsZipFileWithModIdSync(
             Path zipPath,
             Path destination,
             DownloadProgressScreen progressScreen
@@ -488,6 +514,7 @@ public class ClientEventHandlers {
         Map<String, List<Path>> existingModsById = indexInstalledModsById(destination, progressScreen);
         LOGGER.info("Indexed {} modIds in {}", existingModsById.size(), destination);
 
+        Set<String> extractedFiles = new HashSet<>();
         try (ZipFile zipFile = new ZipFile(zipPath.toFile())) {
             List<? extends ZipEntry> entries = Collections.list(zipFile.entries());
             int total = entries.size();
@@ -556,13 +583,17 @@ public class ClientEventHandlers {
                     }
 
                     Files.write(entryPath, jarBytes, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
+                    extractedFiles.add(entryName.replace('\\', '/'));
                 } else {
                     try (InputStream is = zipFile.getInputStream(entry)) {
                         Files.copy(is, entryPath, StandardCopyOption.REPLACE_EXISTING);
                     }
+                    extractedFiles.add(entryName.replace('\\', '/'));
                 }
             }
         }
+
+        return extractedFiles;
     }
 
     private static Map<String, List<Path>> indexInstalledModsById(
@@ -786,5 +817,66 @@ public class ClientEventHandlers {
             return;
         }
         minecraft.execute(() -> progressScreen.updateProcessing(title, detail, progress, hasProgress));
+    }
+
+    private static Checksum.ChecksumDiff computeAndSaveChecksumsFromZip(
+            Path zipPath,
+            Path checksumFile,
+            DownloadProgressScreen progressScreen,
+            String displayName,
+            String rootPrefixToStrip
+    ) throws Exception {
+        LOGGER.info("Comparing checksums...");
+        updateProcessing(progressScreen, "Comparing " + displayName + " checksums...", "Scanning zip entries...", 0, false);
+
+        Map<String, String> newChecksums = new HashMap<>();
+        try (ZipFile zipFile = new ZipFile(zipPath.toFile())) {
+            List<? extends ZipEntry> entries = Collections.list(zipFile.entries());
+            int total = entries.size();
+            int current = 0;
+            for (ZipEntry entry : entries) {
+                if (entry.isDirectory()) {
+                    continue;
+                }
+                current++;
+                String entryName = normalizeZipEntryName(entry.getName(), rootPrefixToStrip);
+                if (entryName.isBlank()) {
+                    continue;
+                }
+                int progress = total > 0 ? (int) ((current * 100L) / total) : 0;
+                String detail = total > 0
+                        ? String.format("%d/%d: %s", current, total, entryName)
+                        : entryName;
+                updateProcessing(progressScreen, "Comparing " + displayName + " checksums...", detail, progress, total > 0);
+
+                try (InputStream is = zipFile.getInputStream(entry)) {
+                    newChecksums.put(entryName, Checksum.computeChecksum(is));
+                }
+            }
+        }
+
+        Checksum.ChecksumResult result = Checksum.compareChecksums(checksumFile, newChecksums);
+        Checksum.saveChecksums(checksumFile, result.getNewChecksums());
+        return result.getDiff();
+    }
+
+    private static String normalizeZipEntryName(String entryName, String rootPrefixToStrip) {
+        if (entryName == null) {
+            return "";
+        }
+        String normalized = entryName.replace('\\', '/');
+        if (rootPrefixToStrip != null && !rootPrefixToStrip.isBlank()) {
+            String prefix = rootPrefixToStrip.replace('\\', '/');
+            if (!prefix.endsWith("/")) {
+                prefix = prefix + "/";
+            }
+            if (normalized.startsWith(prefix)) {
+                normalized = normalized.substring(prefix.length());
+            }
+        }
+        if (normalized.startsWith("/")) {
+            normalized = normalized.substring(1);
+        }
+        return normalized.trim();
     }
 }
