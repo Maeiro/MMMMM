@@ -1,4 +1,4 @@
-package com.mmmmm;
+package com.mmmmm.core;
 
 import com.google.gson.JsonParser;
 import com.moandjiezana.toml.Toml;
@@ -45,6 +45,7 @@ public class RegisterCommands {
 
     // Track last build time to avoid unnecessary zips
     private static FileTime lastBuildTime = FileTime.fromMillis(0);
+    private static FileTime lastConfigBuildTime = FileTime.fromMillis(0);
 
     public static void onRegisterCommands(RegisterCommandsEvent event) {
         LOGGER.info("Registering server commands...");
@@ -63,6 +64,17 @@ public class RegisterCommands {
                             return 1;
                         })
                 )
+                .then(Commands.literal("save-config")
+                        .requires(source -> source.hasPermission(2))
+                        .executes(context -> {
+                            saveConfigToZip();
+                            context.getSource().sendSuccess(
+                                    () -> Component.literal("Zipping config... check console for progress."),
+                                    true
+                            );
+                            return 1;
+                        })
+                )
         );
     }
 
@@ -73,9 +85,12 @@ public class RegisterCommands {
 
             try {
                 // Get list of .jar mods
-                List<Path> modFiles = Files.walk(modsFolder)
-                        .filter(p -> Files.isRegularFile(p) && p.toString().endsWith(".jar"))
-                        .collect(Collectors.toList());
+                List<Path> modFiles;
+                try (var stream = Files.walk(modsFolder)) {
+                    modFiles = stream
+                            .filter(p -> Files.isRegularFile(p) && p.toString().endsWith(".jar"))
+                            .collect(Collectors.toList());
+                }
 
                 if (modFiles.isEmpty()) {
                     LOGGER.warn("No .jar files found in mods folder, skipping zip.");
@@ -150,6 +165,84 @@ public class RegisterCommands {
 
             } catch (IOException e) {
                 LOGGER.error("Failed to create mods.zip", e);
+            }
+        });
+    }
+
+    public static void saveConfigToZip() {
+        executor.execute(() -> {
+            Path configFolder = Path.of("config");
+            Path configZip = Path.of("MMMMM/shared-files/config.zip");
+
+            try {
+                if (!Files.exists(configFolder)) {
+                    LOGGER.warn("Config folder does not exist, skipping zip.");
+                    return;
+                }
+
+                List<Path> configFiles;
+                try (var stream = Files.walk(configFolder)) {
+                    configFiles = stream
+                            .filter(Files::isRegularFile)
+                            .collect(Collectors.toList());
+                }
+
+                if (configFiles.isEmpty()) {
+                    LOGGER.warn("No files found in config folder, skipping zip.");
+                    return;
+                }
+
+                FileTime latestChange = configFiles.stream()
+                        .map(path -> {
+                            try {
+                                return Files.getLastModifiedTime(path);
+                            } catch (IOException e) {
+                                return FileTime.fromMillis(0);
+                            }
+                        })
+                        .max(FileTime::compareTo)
+                        .orElse(FileTime.fromMillis(0));
+
+                if (latestChange.compareTo(lastConfigBuildTime) <= 0 && Files.exists(configZip)) {
+                    LOGGER.info("Config has not changed since last build. Skipping zip creation.");
+                    return;
+                }
+
+                LOGGER.info("Starting config.zip creation. Found {} files.", configFiles.size());
+
+                try {
+                    Path parent = configZip.getParent();
+                    if (parent != null) {
+                        Files.createDirectories(parent);
+                    }
+                } catch (IOException e) {
+                    LOGGER.error("Failed to create directories for config.zip", e);
+                    return;
+                }
+
+                try (ZipOutputStream zipOut = new ZipOutputStream(Files.newOutputStream(configZip))) {
+                    int total = configFiles.size();
+                    int index = 0;
+
+                    for (Path path : configFiles) {
+                        index++;
+                        Path relativePath = configFolder.relativize(path);
+                        String entryName = relativePath.toString().replace('\\', '/');
+                        ZipEntry zipEntry = new ZipEntry(entryName);
+                        zipOut.putNextEntry(zipEntry);
+                        Files.copy(path, zipOut);
+                        zipOut.closeEntry();
+
+                        LOGGER.info("[{}/{}] Included config file: {}",
+                                index, total, relativePath);
+                    }
+                }
+
+                lastConfigBuildTime = latestChange;
+                LOGGER.info("Finished creating config.zip in shared-files. {} files processed.", configFiles.size());
+
+            } catch (IOException e) {
+                LOGGER.error("Failed to create config.zip", e);
             }
         });
     }
