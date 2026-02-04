@@ -10,6 +10,7 @@ Key features
 - In-game update button on the multiplayer server list.
 - modId-based sync: avoids duplicates when the .jar filename changes.
 - Optional /config update (enabled by default).
+- Optional removal list in `mods.zip` to delete specific client jars.
 - Built-in file server to host `mods.zip` and `config.zip`.
 
 Server usage
@@ -18,11 +19,13 @@ Server usage
 2) Generate the packages:
    - `/mmmmm save-mods` -> creates `MMMMM/shared-files/mods.zip`
    - `/mmmmm save-config` -> creates `MMMMM/shared-files/config.zip`
+   - (optional) Add `modsToRemoveFromTheClient.json` to `mods.zip` to remove client jars
 3) The embedded file server runs on the `fileServerPort` value.
 
 Notes:
 - The commands bundle *all* mods/configs at once. You can also create `mods.zip`
   and `config.zip` manually if you want to ship only specific files.
+- You can include a removal list inside `mods.zip` to delete client jars automatically.
 
 Client usage
 ------------
@@ -44,7 +47,21 @@ How updates work
 - The client downloads `mods.zip` and extracts it into `/mods`.
 - For each .jar, the mod reads its `modId` and removes any older version of the same mod,
   even if the filename is different.
+- If `modsToRemoveFromTheClient.json` exists in `mods.zip`, any jar listed there is
+  removed from `/mods` during the update.
 - If `updateConfig=true`, it also downloads `config.zip` and extracts it into `/config`.
+
+Removal list format
+-------------------
+Create `modsToRemoveFromTheClient.json` inside `mods.zip` with a plain JSON array
+of jar file names:
+
+```json
+[
+  "banana1.jar",
+  "banana2.jar"
+]
+```
 
 Tips / Troubleshooting
 ----------------------
