@@ -60,11 +60,13 @@ public final class UpdateCoordinator {
 
     private static final class UpdateSummary {
         private final String title;
-        private final List<String> lines;
+        private final List<String> summaryLines;
+        private final List<String> detailLines;
 
-        private UpdateSummary(String title, List<String> lines) {
+        private UpdateSummary(String title, List<String> summaryLines, List<String> detailLines) {
             this.title = title;
-            this.lines = lines;
+            this.summaryLines = summaryLines;
+            this.detailLines = detailLines;
         }
     }
 
@@ -169,8 +171,8 @@ public final class UpdateCoordinator {
         } catch (Exception e) {
             LOGGER.error("Failed to download or extract mods", e);
             UpdateSummary summary = buildUpdateSummary(updateBaseUrl, modsOutcome, configOutcome, true, summaryExtras);
-            minecraft.execute(() -> progressScreen.showSummary(summary.title, summary.lines));
-            sendPlayerMessages(minecraft, summary.lines);
+            minecraft.execute(() -> progressScreen.showSummary(summary.title, summary.summaryLines, summary.detailLines));
+            sendPlayerMessages(minecraft, summary.summaryLines);
             return;
         } finally {
             executor.shutdown();
@@ -183,8 +185,8 @@ public final class UpdateCoordinator {
         }
 
         UpdateSummary summary = buildUpdateSummary(updateBaseUrl, modsOutcome, configOutcome, false, summaryExtras);
-        minecraft.execute(() -> progressScreen.showSummary(summary.title, summary.lines));
-        sendPlayerMessages(minecraft, summary.lines);
+        minecraft.execute(() -> progressScreen.showSummary(summary.title, summary.summaryLines, summary.detailLines));
+        sendPlayerMessages(minecraft, summary.summaryLines);
     }
 
     private static UpdateOutcome downloadConfigUpdate(
@@ -740,7 +742,8 @@ public final class UpdateCoordinator {
             boolean failedEarly,
             List<String> summaryExtras
     ) {
-        List<String> lines = new ArrayList<>();
+        List<String> summaryLines = new ArrayList<>();
+        List<String> detailLines = new ArrayList<>();
         boolean configAttempted = Config.updateConfig;
         boolean modsSuccess = modsOutcome != null && modsOutcome.isSuccess();
         boolean configSuccess = !configAttempted || (configOutcome != null && configOutcome.isSuccess());
@@ -750,37 +753,56 @@ public final class UpdateCoordinator {
         String title = failedEarly ? "Update failed" : "Update complete";
 
         if (modsSuccess) {
-            lines.add(buildUpdateMessage("Mods", modsOutcome.getDiff()));
+            summaryLines.add(buildSummaryLine("Mods", modsOutcome.getDiff()));
+            detailLines.add(buildDetailMessage("Mods", modsOutcome.getDiff()));
         } else {
-            lines.add("Mods update failed for " + updateBaseUrl + ". Check logs for details.");
+            summaryLines.add("Mods update failed for " + updateBaseUrl + ". Check logs for details.");
+            detailLines.add("Mods update failed for " + updateBaseUrl + ". Check logs for details.");
             title = "Update failed";
         }
 
         if (configAttempted) {
             if (configSuccess) {
-                lines.add(buildUpdateMessage("Config", configOutcome.getDiff()));
+                summaryLines.add(buildSummaryLine("Config", configOutcome.getDiff()));
+                detailLines.add(buildDetailMessage("Config", configOutcome.getDiff()));
             } else {
-                lines.add("Config update failed for " + updateBaseUrl + ". Check logs for details.");
+                summaryLines.add("Config update failed for " + updateBaseUrl + ". Check logs for details.");
+                detailLines.add("Config update failed for " + updateBaseUrl + ". Check logs for details.");
                 title = "Update failed";
             }
         } else {
-            lines.add("Config updates disabled.");
+            summaryLines.add("Config updates disabled.");
         }
 
         if (modsChanged) {
-            lines.add("Mods were updated. Please restart the game to apply them.");
+            summaryLines.add("Mods were updated. Please restart the game to apply them.");
         } else if (!modsChanged && !configChanged && !failedEarly && modsSuccess && configSuccess) {
-            lines.add("No updates found.");
+            summaryLines.add("No updates found.");
         }
 
         if (summaryExtras != null && !summaryExtras.isEmpty()) {
-            lines.addAll(summaryExtras);
+            summaryLines.add("Warnings: " + summaryExtras.size() + " (see details)");
+            detailLines.addAll(summaryExtras);
         }
 
-        return new UpdateSummary(title, lines);
+        return new UpdateSummary(title, summaryLines, detailLines);
     }
 
-    private static String buildUpdateMessage(String label, Checksum.ChecksumDiff diff) {
+    private static String buildSummaryLine(String label, Checksum.ChecksumDiff diff) {
+        if (diff == null || diff.isEmpty()) {
+            return label + ": no changes.";
+        }
+
+        return label + " updated: +"
+                + diff.getAdded().size()
+                + " ~"
+                + diff.getModified().size()
+                + " -"
+                + diff.getRemoved().size()
+                + ".";
+    }
+
+    private static String buildDetailMessage(String label, Checksum.ChecksumDiff diff) {
         if (diff == null || diff.isEmpty()) {
             return label + ": no changes.";
         }

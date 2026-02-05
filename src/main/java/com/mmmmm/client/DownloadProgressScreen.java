@@ -11,6 +11,12 @@ import java.util.List;
 
 public class DownloadProgressScreen extends Screen {
 
+    private static final int BUTTON_WIDTH = 100;
+    private static final int BUTTON_HEIGHT = 20;
+    private static final int BUTTON_GAP = 8;
+    private static final int SCROLLBAR_WIDTH = 4;
+    private static final int SCROLLBAR_MARGIN = 8;
+
     private volatile String downloadSource;
     private volatile String downloadLabel;
     private volatile int progress = 0;
@@ -27,6 +33,10 @@ public class DownloadProgressScreen extends Screen {
     private volatile String summaryTitle = "Update complete";
     private volatile List<String> summaryLines = Collections.emptyList();
     private volatile boolean isCancelled = false;
+    private volatile List<String> detailLines = Collections.emptyList();
+    private volatile boolean showDetails = false;
+    private int summaryScroll = 0;
+    private Button detailsButton;
 
     public DownloadProgressScreen(String downloadLabel, String downloadSource, Screen returnScreen) {
         super(Component.literal("Downloading Update"));
@@ -38,9 +48,6 @@ public class DownloadProgressScreen extends Screen {
     protected void init() {
         super.init();
 
-        int buttonWidth = 100;
-        int buttonHeight = 20;
-        int buttonX = (this.width - buttonWidth) / 2;
         int buttonY = (this.height / 2) + 50;
 
         cancelButton = Button.builder(Component.literal("Cancel"), (button) -> {
@@ -48,9 +55,21 @@ public class DownloadProgressScreen extends Screen {
                 isCancelled = true; // Signal cancellation
             }
             minecraft.execute(() -> minecraft.setScreen(returnScreen)); // Return to the previous screen
-        }).bounds(buttonX, buttonY, buttonWidth, buttonHeight).build();
+        }).bounds(0, buttonY, BUTTON_WIDTH, BUTTON_HEIGHT).build();
+
+        detailsButton = Button.builder(Component.literal("Details"), (button) -> {
+            if (!showSummary) {
+                return;
+            }
+            showDetails = !showDetails;
+            summaryScroll = 0;
+            detailsButton.setMessage(Component.literal(showDetails ? "Summary" : "Details"));
+        }).bounds(0, buttonY, BUTTON_WIDTH, BUTTON_HEIGHT).build();
 
         this.addRenderableWidget(cancelButton);
+        this.addRenderableWidget(detailsButton);
+
+        layoutButtons();
     }
 
     /**
@@ -77,9 +96,19 @@ public class DownloadProgressScreen extends Screen {
         this.showSummary = false;
         this.summaryTitle = "Update complete";
         this.summaryLines = Collections.emptyList();
+        this.detailLines = Collections.emptyList();
+        this.showDetails = false;
+        this.summaryScroll = 0;
         if (cancelButton != null) {
             cancelButton.setMessage(Component.literal("Cancel"));
         }
+        if (detailsButton != null) {
+            detailsButton.visible = false;
+            detailsButton.active = false;
+            detailsButton.setMessage(Component.literal("Details"));
+        }
+
+        layoutButtons();
     }
 
     /**
@@ -116,13 +145,16 @@ public class DownloadProgressScreen extends Screen {
     }
 
     public void showSummary(String title, List<String> lines) {
+        showSummary(title, lines, Collections.emptyList());
+    }
+
+    public void showSummary(String title, List<String> summaryLines, List<String> detailLines) {
         this.showSummary = true;
         this.summaryTitle = title == null || title.isBlank() ? "Update complete" : title;
-        if (lines == null || lines.isEmpty()) {
-            this.summaryLines = Collections.emptyList();
-        } else {
-            this.summaryLines = Collections.unmodifiableList(new ArrayList<>(lines));
-        }
+        this.summaryLines = normalizeLines(summaryLines);
+        this.detailLines = normalizeLines(detailLines);
+        this.showDetails = false;
+        this.summaryScroll = 0;
         this.isProcessing = false;
         this.processingTitle = "";
         this.processingDetail = "";
@@ -130,6 +162,14 @@ public class DownloadProgressScreen extends Screen {
         if (cancelButton != null) {
             cancelButton.setMessage(Component.literal("Close"));
         }
+        if (detailsButton != null) {
+            boolean hasDetails = !this.detailLines.isEmpty();
+            detailsButton.visible = hasDetails;
+            detailsButton.active = hasDetails;
+            detailsButton.setMessage(Component.literal("Details"));
+        }
+
+        layoutButtons();
     }
 
     @Override
@@ -200,21 +240,104 @@ public class DownloadProgressScreen extends Screen {
 
     private void renderSummary(GuiGraphics guiGraphics) {
         guiGraphics.drawCenteredString(this.font, summaryTitle, this.width / 2, 20, 0xFFFFFF);
+        String modeLabel = showDetails ? "Details" : "Summary";
+        guiGraphics.drawCenteredString(this.font, modeLabel, this.width / 2, 36, 0xA0A0A0);
 
+        List<String> lines = showDetails ? detailLines : summaryLines;
         int maxWidth = Math.max(200, this.width - 40);
-        int y = (this.height / 2) - 40;
+        int top = 50;
+        int bottom = cancelButton != null ? cancelButton.getY() - 10 : this.height - 30;
+        int lineHeight = 12;
+        int maxVisibleLines = Math.max(1, (bottom - top) / lineHeight);
 
-        if (summaryLines.isEmpty()) {
-            guiGraphics.drawCenteredString(this.font, "No details available.", this.width / 2, y, 0xFFFFFF);
+        List<net.minecraft.util.FormattedCharSequence> wrappedLines = wrapLines(lines, maxWidth);
+        int totalLines = wrappedLines.size();
+        int maxScroll = Math.max(0, totalLines - maxVisibleLines);
+        summaryScroll = Math.min(summaryScroll, maxScroll);
+
+        if (wrappedLines.isEmpty()) {
+            guiGraphics.drawCenteredString(this.font, "No details available.", this.width / 2, top, 0xFFFFFF);
             return;
         }
 
-        for (String line : summaryLines) {
-            for (var wrapped : this.font.split(Component.literal(line), maxWidth)) {
-                guiGraphics.drawCenteredString(this.font, wrapped, this.width / 2, y, 0xFFFFFF);
-                y += 12;
-            }
-            y += 4;
+        int y = top;
+        int end = Math.min(totalLines, summaryScroll + maxVisibleLines);
+        for (int i = summaryScroll; i < end; i++) {
+            guiGraphics.drawCenteredString(this.font, wrappedLines.get(i), this.width / 2, y, 0xFFFFFF);
+            y += lineHeight;
         }
+
+        if (maxScroll > 0) {
+            renderScrollBar(guiGraphics, top, bottom, summaryScroll, maxScroll);
+        }
+    }
+
+    @Override
+    public boolean mouseScrolled(double mouseX, double mouseY, double scrollX, double scrollY) {
+        if (showSummary) {
+            int totalLines = wrapLines(showDetails ? detailLines : summaryLines, Math.max(200, this.width - 40)).size();
+            int top = 50;
+            int bottom = cancelButton != null ? cancelButton.getY() - 10 : this.height - 30;
+            int maxVisibleLines = Math.max(1, (bottom - top) / 12);
+            int maxScroll = Math.max(0, totalLines - maxVisibleLines);
+            if (maxScroll > 0) {
+                summaryScroll = Math.max(0, Math.min(maxScroll, summaryScroll - (int) Math.signum(scrollY)));
+                return true;
+            }
+        }
+        return super.mouseScrolled(mouseX, mouseY, scrollX, scrollY);
+    }
+
+    private List<net.minecraft.util.FormattedCharSequence> wrapLines(List<String> lines, int maxWidth) {
+        if (lines == null || lines.isEmpty()) {
+            return Collections.emptyList();
+        }
+        List<net.minecraft.util.FormattedCharSequence> wrapped = new ArrayList<>();
+        for (String line : lines) {
+            wrapped.addAll(this.font.split(Component.literal(line), maxWidth));
+        }
+        return wrapped;
+    }
+
+    private List<String> normalizeLines(List<String> lines) {
+        if (lines == null || lines.isEmpty()) {
+            return Collections.emptyList();
+        }
+        return Collections.unmodifiableList(new ArrayList<>(lines));
+    }
+
+    private void layoutButtons() {
+        if (cancelButton == null) {
+            return;
+        }
+
+        int buttonY = (this.height / 2) + 50;
+        boolean showDetailsButton = detailsButton != null && detailsButton.visible;
+        int totalWidth = showDetailsButton
+                ? (BUTTON_WIDTH * 2) + BUTTON_GAP
+                : BUTTON_WIDTH;
+        int leftX = (this.width - totalWidth) / 2;
+
+        if (showDetailsButton) {
+            detailsButton.setX(leftX);
+            detailsButton.setY(buttonY);
+            cancelButton.setX(leftX + BUTTON_WIDTH + BUTTON_GAP);
+            cancelButton.setY(buttonY);
+        } else {
+            cancelButton.setX(leftX);
+            cancelButton.setY(buttonY);
+        }
+    }
+
+    private void renderScrollBar(GuiGraphics guiGraphics, int top, int bottom, int scroll, int maxScroll) {
+        int barHeight = Math.max(1, bottom - top);
+        int x = this.width - SCROLLBAR_MARGIN - SCROLLBAR_WIDTH;
+
+        guiGraphics.fill(x, top, x + SCROLLBAR_WIDTH, bottom, 0x60FFFFFF);
+
+        int thumbHeight = Math.max(10, (int) Math.round((barHeight * (1.0 / (maxScroll + 1)))));
+        int available = barHeight - thumbHeight;
+        int thumbY = top + (int) Math.round((available * (scroll / (double) maxScroll)));
+        guiGraphics.fill(x, thumbY, x + SCROLLBAR_WIDTH, thumbY + thumbHeight, 0xC0FFFFFF);
     }
 }
