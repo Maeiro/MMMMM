@@ -5,6 +5,14 @@ NeoForge mod that keeps client mods in sync with a server-provided modpack.
 The goal is to maintain server-client compatibility with a single in-game
 Update button.
 
+Fork notice
+-----------
+This project is a fork of `https://github.com/Place-Boy/MMMMM`.
+
+Credits
+-------
+- Original project by Place-Boy: `https://github.com/Place-Boy`
+
 Key features
 ------------
 - In-game update button on the multiplayer server list.
