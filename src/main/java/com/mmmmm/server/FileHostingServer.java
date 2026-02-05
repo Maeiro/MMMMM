@@ -15,16 +15,18 @@ import java.util.concurrent.Executors;
  */
 public class FileHostingServer {
 
-    private static HttpServer fileHostingServer;
-    private static ExecutorService fileExecutor;
-    private static volatile int activePort = -1;
+    private static HttpServer httpServer;
+    private static ExecutorService executor;
+    private static volatile int currentPort = -1;
     public static final Path FILE_DIRECTORY = Path.of("MMMMM/shared-files");
+    private static final String ZIP_CONTENT_TYPE = "application/zip";
+    private static final String DEFAULT_CONTENT_TYPE = "application/octet-stream";
 
     /**
      * Starts the file hosting server on a separate thread.
      */
     public static void start() throws IOException {
-        if (fileHostingServer != null) {
+        if (httpServer != null) {
             return;
         }
 
@@ -35,10 +37,10 @@ public class FileHostingServer {
         }
 
         // Create and configure the HTTP server
-        fileHostingServer = HttpServer.create(new InetSocketAddress(port), 0);
-        activePort = port;
+        httpServer = HttpServer.create(new InetSocketAddress(port), 0);
+        currentPort = port;
 
-        fileHostingServer.createContext("/", exchange -> {
+        httpServer.createContext("/", exchange -> {
             try {
                 String requestPath = exchange.getRequestURI().getPath();
                 MMMMM.LOGGER.info("Received request: " + requestPath);
@@ -57,7 +59,7 @@ public class FileHostingServer {
                     return;
                 }
 
-                String contentType = requestPath.endsWith(".zip") ? "application/zip" : "application/octet-stream";
+                String contentType = requestPath.endsWith(".zip") ? ZIP_CONTENT_TYPE : DEFAULT_CONTENT_TYPE;
                 exchange.getResponseHeaders().add("Content-Type", contentType);
 
                 long fileSize = Files.size(filePath);
@@ -82,12 +84,12 @@ public class FileHostingServer {
             }
         });
 
-        fileExecutor = Executors.newCachedThreadPool(); // Enable concurrent downloads
-        fileHostingServer.setExecutor(fileExecutor);
+        executor = Executors.newCachedThreadPool(); // Enable concurrent downloads
+        httpServer.setExecutor(executor);
         // Start the server on a separate thread
         new Thread(() -> {
-            fileHostingServer.start();
-            MMMMM.LOGGER.info("File hosting server started on port " + activePort);
+            httpServer.start();
+            MMMMM.LOGGER.info("File hosting server started on port " + currentPort);
         }).start();
     }
 
@@ -95,27 +97,27 @@ public class FileHostingServer {
      * Stops the file hosting server.
      */
     public static void stop() {
-        if (fileHostingServer != null) {
-            fileHostingServer.stop(0);
+        if (httpServer != null) {
+            httpServer.stop(0);
             MMMMM.LOGGER.info("File hosting server stopped.");
-            fileHostingServer = null;
-            activePort = -1;
+            httpServer = null;
+            currentPort = -1;
         }
-        if (fileExecutor != null) {
-            fileExecutor.shutdown();
-            fileExecutor = null;
+        if (executor != null) {
+            executor.shutdown();
+            executor = null;
         }
     }
 
     public static synchronized void restartIfPortChanged() throws IOException {
         int desiredPort = Config.fileServerPort;
-        if (fileHostingServer == null) {
+        if (httpServer == null) {
             start();
             return;
         }
 
-        if (desiredPort != activePort) {
-            MMMMM.LOGGER.info("File server port changed ({} -> {}). Restarting.", activePort, desiredPort);
+        if (desiredPort != currentPort) {
+            MMMMM.LOGGER.info("File server port changed ({} -> {}). Restarting.", currentPort, desiredPort);
             stop();
             start();
         }

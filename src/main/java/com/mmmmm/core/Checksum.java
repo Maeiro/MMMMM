@@ -23,6 +23,9 @@ import org.slf4j.LoggerFactory;
 public class Checksum {
 
     private static final Logger LOGGER = LoggerFactory.getLogger(Checksum.class);
+    private static final Gson GSON = new Gson();
+    private static final HexFormat HEX_FORMAT = HexFormat.of();
+    private static final int BUFFER_SIZE = 8192;
 
     public static final class ChecksumDiff {
         private final List<String> added;
@@ -98,13 +101,13 @@ public class Checksum {
     }
 
     private static String computeChecksum(java.io.InputStream inputStream, MessageDigest digest) throws Exception {
-        byte[] buffer = new byte[8192];
+        byte[] buffer = new byte[BUFFER_SIZE];
         int read;
         while ((read = inputStream.read(buffer)) != -1) {
             digest.update(buffer, 0, read);
         }
         byte[] hashBytes = digest.digest();
-        return HexFormat.of().formatHex(hashBytes);
+        return HEX_FORMAT.formatHex(hashBytes);
     }
 
     private static String toRelativeKey(Path root, Path file) {
@@ -117,7 +120,7 @@ public class Checksum {
     }
 
     public static void saveChecksums(Path checksumFile, Map<String, String> checksums) throws Exception {
-        Files.writeString(checksumFile, new Gson().toJson(checksums));
+        Files.writeString(checksumFile, GSON.toJson(checksums));
     }
 
     public static ChecksumResult compareChecksums(Path targetDirectory, Path checksumFile) throws Exception {
@@ -272,7 +275,7 @@ public class Checksum {
         }
 
         Type type = new TypeToken<Map<String, String>>() {}.getType();
-        Map<String, String> checksums = new Gson().fromJson(content, type);
+        Map<String, String> checksums = GSON.fromJson(content, type);
         return checksums == null ? Map.of() : checksums;
     }
 

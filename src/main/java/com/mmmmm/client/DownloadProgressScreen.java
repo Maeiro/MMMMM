@@ -11,22 +11,22 @@ import java.util.List;
 
 public class DownloadProgressScreen extends Screen {
 
-    private volatile String downloadSource; // Use the correct download source
-    private volatile String downloadLabel; // Current download label (mods/config)
-    private volatile int progress = 0; // Progress percentage (0-100)
-    private volatile String downloadSpeed = "0 KB/s"; // Download speed
-    private volatile String estimatedTimeRemaining = ""; // Estimated time remaining
-    private Button cancelButton; // Cancel button
-    private volatile boolean isProcessing = false; // Indicates if processing is in progress
-    private volatile String processingTitle = ""; // Message shown during processing
-    private volatile String processingDetail = ""; // Extra info for processing
-    private volatile int processingProgress = 0; // Progress for processing phase
-    private volatile boolean processingHasProgress = false; // Whether processing progress is known
+    private volatile String downloadSource;
+    private volatile String downloadLabel;
+    private volatile int progress = 0;
+    private volatile String downloadSpeed = "0 KB/s";
+    private volatile String estimatedTimeRemaining = "";
+    private Button cancelButton;
+    private volatile boolean isProcessing = false;
+    private volatile String processingTitle = "";
+    private volatile String processingDetail = "";
+    private volatile int processingProgress = 0;
+    private volatile boolean processingHasProgress = false;
     private final Screen returnScreen;
     private volatile boolean showSummary = false;
     private volatile String summaryTitle = "Update complete";
     private volatile List<String> summaryLines = Collections.emptyList();
-
+    private volatile boolean isCancelled = false;
 
     public DownloadProgressScreen(String downloadLabel, String downloadSource, Screen returnScreen) {
         super(Component.literal("Downloading Update"));
@@ -34,9 +34,6 @@ public class DownloadProgressScreen extends Screen {
         this.downloadSource = downloadSource == null || downloadSource.isBlank() ? "server" : downloadSource;
         this.returnScreen = returnScreen;
     }
-
-    private volatile boolean isCancelled = false;
-
     @Override
     protected void init() {
         super.init();
@@ -93,7 +90,7 @@ public class DownloadProgressScreen extends Screen {
      * @param estimatedTimeRemaining Estimated time remaining (optional).
      */
     public void updateProgress(int progress, String downloadSpeed, String estimatedTimeRemaining) {
-        this.progress = Math.min(100, Math.max(0, progress)); // Clamp progress between 0 and 100
+        this.progress = Math.min(100, Math.max(0, progress));
         this.downloadSpeed = downloadSpeed;
         this.estimatedTimeRemaining = estimatedTimeRemaining;
     }
@@ -151,7 +148,10 @@ public class DownloadProgressScreen extends Screen {
             return;
         }
 
-        // Draw the title with the correct download source
+        renderDownloadProgress(guiGraphics);
+    }
+
+    private void renderDownloadProgress(GuiGraphics guiGraphics) {
         guiGraphics.drawCenteredString(this.font, "Downloading " + downloadLabel + " from " + downloadSource, this.width / 2, 20, 0xFFFFFF);
 
         int barWidth = 200;
@@ -159,24 +159,17 @@ public class DownloadProgressScreen extends Screen {
         int barX = (this.width - barWidth) / 2;
         int barY = this.height / 2;
 
-        // Draw the download speed above the progress bar
         guiGraphics.drawCenteredString(this.font, downloadSpeed, this.width / 2, barY - 30, 0xFFFFFF);
-        // Draw estimated time remaining if available
         if (!estimatedTimeRemaining.isEmpty()) {
             guiGraphics.drawCenteredString(this.font, "ETA: " + estimatedTimeRemaining, this.width / 2, barY - 55, 0xFFFFFF);
         }
 
-        // Draw the progress bar background
-        guiGraphics.fill(barX, barY, barX + barWidth, barY + barHeight, 0xFFAAAAAA); // Gray background
+        guiGraphics.fill(barX, barY, barX + barWidth, barY + barHeight, 0xFFAAAAAA);
 
-        // Draw the progress bar foreground
         int progressWidth = (int) (barWidth * (progress / 100.0));
-        guiGraphics.fill(barX, barY, barX + progressWidth, barY + barHeight, 0xFF00FF00); // Green foreground
+        guiGraphics.fill(barX, barY, barX + progressWidth, barY + barHeight, 0xFF00FF00);
 
-        // Draw the progress percentage
         guiGraphics.drawCenteredString(this.font, progress + "%", this.width / 2, barY + 5, 0xFFFFFF);
-
-        // The cancel button is already positioned below the progress bar in the `init` method
     }
 
     private void renderProcessing(GuiGraphics guiGraphics) {
@@ -194,13 +187,12 @@ public class DownloadProgressScreen extends Screen {
             guiGraphics.drawCenteredString(this.font, processingDetail, this.width / 2, barY - 30, 0xFFFFFF);
         }
 
-        // Draw the progress bar background
-        guiGraphics.fill(barX, barY, barX + barWidth, barY + barHeight, 0xFFAAAAAA); // Gray background
+        guiGraphics.fill(barX, barY, barX + barWidth, barY + barHeight, 0xFFAAAAAA);
 
         int progressWidth = processingHasProgress
                 ? (int) (barWidth * (processingProgress / 100.0))
                 : 0;
-        guiGraphics.fill(barX, barY, barX + progressWidth, barY + barHeight, 0xFF00FF00); // Green foreground
+        guiGraphics.fill(barX, barY, barX + progressWidth, barY + barHeight, 0xFF00FF00);
 
         String progressLabel = processingHasProgress ? (processingProgress + "%") : "...";
         guiGraphics.drawCenteredString(this.font, progressLabel, this.width / 2, barY + 5, 0xFFFFFF);
