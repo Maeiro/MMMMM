@@ -33,7 +33,8 @@ Server usage
 Notes:
 - The commands bundle *all* mods/configs at once. You can also create `mods.zip`
   and `config.zip` manually if you want to ship only specific files.
-- You can include a removal list inside `mods.zip` to delete client jars automatically.
+- You can also include an optional `modsToRemoveFromTheClient.json` inside `mods.zip`
+  to delete specific jars from the client.
 
 Client usage
 ------------
