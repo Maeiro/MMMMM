@@ -1,7 +1,7 @@
-package com.mmmmm.server;
+package com.scs.server;
 
-import com.mmmmm.core.Config;
-import com.mmmmm.core.MMMMM;
+import com.scs.core.Config;
+import com.scs.core.SCS;
 import com.sun.net.httpserver.HttpServer;
 import java.io.IOException;
 import java.net.InetSocketAddress;
@@ -18,7 +18,7 @@ public class FileHostingServer {
     private static HttpServer httpServer;
     private static ExecutorService executor;
     private static volatile int currentPort = -1;
-    public static final Path FILE_DIRECTORY = Path.of("MMMMM/shared-files");
+    public static final Path FILE_DIRECTORY = Path.of("SCS/shared-files");
     private static final String ZIP_CONTENT_TYPE = "application/zip";
     private static final String DEFAULT_CONTENT_TYPE = "application/octet-stream";
 
@@ -43,18 +43,18 @@ public class FileHostingServer {
         httpServer.createContext("/", exchange -> {
             try {
                 String requestPath = exchange.getRequestURI().getPath();
-                MMMMM.LOGGER.info("Received request: " + requestPath);
+                SCS.LOGGER.info("Received request: " + requestPath);
 
                 Path filePath = FILE_DIRECTORY.resolve(requestPath.substring(1)).normalize();
 
                 if (!filePath.startsWith(FILE_DIRECTORY)) {
-                    MMMMM.LOGGER.warn("Unauthorized access attempt: " + filePath);
+                    SCS.LOGGER.warn("Unauthorized access attempt: " + filePath);
                     exchange.sendResponseHeaders(403, -1);
                     return;
                 }
 
                 if (!Files.exists(filePath) || Files.isDirectory(filePath)) {
-                    MMMMM.LOGGER.warn("File not found: " + filePath);
+                    SCS.LOGGER.warn("File not found: " + filePath);
                     exchange.sendResponseHeaders(404, -1);
                     return;
                 }
@@ -70,14 +70,14 @@ public class FileHostingServer {
                     is.transferTo(os);
                 }
 
-                MMMMM.LOGGER.info("Successfully served file: " + filePath);
+                SCS.LOGGER.info("Successfully served file: " + filePath);
 
             } catch (Exception e) {
-                MMMMM.LOGGER.error("Error processing request", e);
+                SCS.LOGGER.error("Error processing request", e);
                 try {
                     exchange.sendResponseHeaders(500, -1); // Internal Server Error
                 } catch (IOException ioException) {
-                    MMMMM.LOGGER.error("Failed to send error response", ioException);
+                    SCS.LOGGER.error("Failed to send error response", ioException);
                 }
             } finally {
                 exchange.close();
@@ -89,7 +89,7 @@ public class FileHostingServer {
         // Start the server on a separate thread
         new Thread(() -> {
             httpServer.start();
-            MMMMM.LOGGER.info("File hosting server started on port " + currentPort);
+            SCS.LOGGER.info("File hosting server started on port " + currentPort);
         }).start();
     }
 
@@ -99,7 +99,7 @@ public class FileHostingServer {
     public static void stop() {
         if (httpServer != null) {
             httpServer.stop(0);
-            MMMMM.LOGGER.info("File hosting server stopped.");
+            SCS.LOGGER.info("File hosting server stopped.");
             httpServer = null;
             currentPort = -1;
         }
@@ -117,7 +117,7 @@ public class FileHostingServer {
         }
 
         if (desiredPort != currentPort) {
-            MMMMM.LOGGER.info("File server port changed ({} -> {}). Restarting.", currentPort, desiredPort);
+            SCS.LOGGER.info("File server port changed ({} -> {}). Restarting.", currentPort, desiredPort);
             stop();
             start();
         }

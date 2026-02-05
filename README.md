@@ -1,5 +1,5 @@
-MMMMM (Many Minecraft Mods Made Manageable)
-===========================================
+Sync Client Server (SCS)
+========================
 
 NeoForge mod that keeps client mods in sync with a server-provided modpack.
 The goal is to maintain server-client compatibility with a single in-game
@@ -25,8 +25,8 @@ Server usage
 ------------
 1) Start the server with the mod installed.
 2) Generate the packages:
-   - `/mmmmm save-mods` -> creates `MMMMM/shared-files/mods.zip`
-   - `/mmmmm save-config` -> creates `MMMMM/shared-files/config.zip`
+   - `/scs save-mods` -> creates `SCS/shared-files/mods.zip`
+   - `/scs save-config` -> creates `SCS/shared-files/config.zip`
    - (optional) Add `modsToRemoveFromTheClient.json` to `mods.zip` to remove client jars
 3) The embedded file server runs on the `fileServerPort` value.
 
@@ -40,12 +40,12 @@ Client usage
 ------------
 1) Open the server list and edit the target server.
 2) In **Download URL**, enter the server file host (IP or URL).
-   - Example: `127.0.0.1:25566` or `http://myserver:8080`
+   - Example: `127.0.0.1:25566` or `http://myserver:25566`
 3) Return to the list and click **Update**.
 
 Mod configuration
 -----------------
-Config file (COMMON): `config/mmmmm-common.toml`
+Config file (COMMON): `config/scs-common.toml`
 
 - `fileServerPort` (int): file server port.
 - `filterServerMods` (bool): excludes server-only mods from `mods.zip`.

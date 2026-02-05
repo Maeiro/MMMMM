@@ -1,6 +1,6 @@
 {
   "required": true,
-  "package": "com.mmmmm.mixin",
+  "package": "com.scs.mixin",
   "compatibilityLevel": "JAVA_21",
   "mixins": [
     "ScreenAccessorMixin"

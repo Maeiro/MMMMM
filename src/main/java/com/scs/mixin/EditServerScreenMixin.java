@@ -1,6 +1,6 @@
-package com.mmmmm.mixin;
+package com.scs.mixin;
 
-import com.mmmmm.client.ServerMetadata;
+import com.scs.client.ServerMetadata;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.components.CycleButton;

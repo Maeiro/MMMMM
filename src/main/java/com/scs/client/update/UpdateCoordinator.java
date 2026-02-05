@@ -1,9 +1,9 @@
-package com.mmmmm.client.update;
+package com.scs.client.update;
 
-import com.mmmmm.client.DownloadProgressScreen;
-import com.mmmmm.core.Checksum;
-import com.mmmmm.core.Config;
-import com.mmmmm.core.MMMMM;
+import com.scs.client.DownloadProgressScreen;
+import com.scs.core.Checksum;
+import com.scs.core.Config;
+import com.scs.core.SCS;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.network.chat.Component;
@@ -46,12 +46,12 @@ public final class UpdateCoordinator {
     private static final String MOD_ZIP_NAME = "mods.zip";
     private static final String CONFIG_ZIP_NAME = "config.zip";
     private static final String MODS_REMOVE_LIST_NAME = "modsToRemoveFromTheClient.json";
-    private static final Path MOD_DOWNLOAD_PATH = Path.of("MMMMM/shared-files", MOD_ZIP_NAME);
+    private static final Path MOD_DOWNLOAD_PATH = Path.of("SCS/shared-files", MOD_ZIP_NAME);
     private static final Path MOD_UNZIP_DESTINATION = Path.of("mods");
-    private static final Path MOD_CHECKSUM_FILE = Path.of("MMMMM/mods_checksums.json");
-    private static final Path CONFIG_DOWNLOAD_PATH = Path.of("MMMMM/shared-files", CONFIG_ZIP_NAME);
+    private static final Path MOD_CHECKSUM_FILE = Path.of("SCS/mods_checksums.json");
+    private static final Path CONFIG_DOWNLOAD_PATH = Path.of("SCS/shared-files", CONFIG_ZIP_NAME);
     private static final Path CONFIG_UNZIP_DESTINATION = Path.of("config");
-    private static final Path CONFIG_CHECKSUM_FILE = Path.of("MMMMM/config_checksums.json");
+    private static final Path CONFIG_CHECKSUM_FILE = Path.of("SCS/config_checksums.json");
     private static final Logger LOGGER = LoggerFactory.getLogger(UpdateCoordinator.class);
     private static final int MAX_CHANGE_LIST_ITEMS = 5;
 
@@ -569,7 +569,7 @@ public final class UpdateCoordinator {
                         }
 
                         if (!warnedSelfUpdate && summaryExtras != null) {
-                            String zipVersion = modVersions.get(MMMMM.MODID);
+                            String zipVersion = modVersions.get(SCS.MODID);
                             if (zipVersion != null
                                     && currentModVersion != null
                                     && !currentModVersion.isBlank()
@@ -577,7 +577,7 @@ public final class UpdateCoordinator {
                                     && !zipVersion.contains("${")) {
                                 int comparison = compareVersions(zipVersion, currentModVersion);
                                 if (comparison != 0) {
-                                    summaryExtras.add("Warning: mods.zip contains MMMMM " + zipVersion
+                                    summaryExtras.add("Warning: mods.zip contains SCS " + zipVersion
                                             + " (current: " + currentModVersion + "). It will overwrite on disk and apply after restart.");
                                     warnedSelfUpdate = true;
                                 }
@@ -977,7 +977,7 @@ public final class UpdateCoordinator {
 
     private static String getCurrentModVersion() {
         return ModList.get()
-                .getModContainerById(MMMMM.MODID)
+                .getModContainerById(SCS.MODID)
                 .map(container -> container.getModInfo().getVersion().toString())
                 .orElse("unknown");
     }

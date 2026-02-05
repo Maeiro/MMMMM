@@ -1,4 +1,4 @@
-package com.mmmmm.core;
+package com.scs.core;
 
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
@@ -42,7 +42,7 @@ public class RegisterCommands {
 
     private static final Path MODS_FOLDER = Path.of("mods");
     private static final Path CONFIG_FOLDER = Path.of("config");
-    private static final Path SHARED_FILES_FOLDER = Path.of("MMMMM/shared-files");
+    private static final Path SHARED_FILES_FOLDER = Path.of("SCS/shared-files");
     private static final Path MODS_ZIP = SHARED_FILES_FOLDER.resolve("mods.zip");
     private static final Path CONFIG_ZIP = SHARED_FILES_FOLDER.resolve("config.zip");
 
@@ -54,7 +54,7 @@ public class RegisterCommands {
 
         CommandDispatcher<CommandSourceStack> dispatcher = event.getDispatcher();
 
-        dispatcher.register(Commands.literal("mmmmm")
+        dispatcher.register(Commands.literal("scs")
                 .then(Commands.literal("save-mods")
                         .requires(source -> source.hasPermission(2))
                         .executes(context -> {
@@ -270,7 +270,7 @@ public class RegisterCommands {
         try {
             HttpRequest request = HttpRequest.newBuilder()
                     .uri(URI.create("https://api.modrinth.com/v2/search?query=" + URLEncoder.encode(modName, "UTF-8")))
-                    .header("User-Agent", "Place-Boy/https://github.com/Place-Boy/MMMMM/1.0.1-beta")
+                    .header("User-Agent", "SCS/https://github.com/Place-Boy/SCS/1.0.1-beta")
                     .GET()
                     .build();
 

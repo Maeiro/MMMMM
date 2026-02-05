@@ -1,7 +1,7 @@
-package com.mmmmm.client;
+package com.scs.client;
 
-import com.mmmmm.client.update.UpdateCoordinator;
-import com.mmmmm.core.MMMMM;
+import com.scs.client.update.UpdateCoordinator;
+import com.scs.core.SCS;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.screens.multiplayer.JoinMultiplayerScreen;
@@ -15,7 +15,7 @@ import net.neoforged.neoforge.client.event.ScreenEvent.Init.Post;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-@EventBusSubscriber(modid = MMMMM.MODID, bus = EventBusSubscriber.Bus.GAME, value = Dist.CLIENT)
+@EventBusSubscriber(modid = SCS.MODID, bus = EventBusSubscriber.Bus.GAME, value = Dist.CLIENT)
 public final class ClientEventHandlers {
 
     private static final Logger LOGGER = LoggerFactory.getLogger(ClientEventHandlers.class);

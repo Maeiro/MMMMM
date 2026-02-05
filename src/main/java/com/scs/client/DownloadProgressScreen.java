@@ -1,4 +1,4 @@
-package com.mmmmm.client;
+package com.scs.client;
 
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.components.Button;

@@ -1,4 +1,4 @@
-package com.mmmmm.core;
+package com.scs.core;
 
 import com.google.gson.Gson;
 import com.google.gson.reflect.TypeToken;
