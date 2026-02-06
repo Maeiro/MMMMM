@@ -21,16 +21,6 @@ public class Config {
                     "Default: 25566"
             )
             .define("fileServerPort", 25566);
-
-    private static final ModConfigSpec.ConfigValue<Boolean> FILTER_SERVER_MODS = BUILDER
-            .comment(
-                    "If true, server-only mods will be excluded from the zip.",
-                    "This trys to decrease download time for clients.",
-                    "Disable this if server is crashing on client join due to missing mods.",
-                    "Default: false"
-            )
-            .define("filterServerMods", false);
-
     private static final ModConfigSpec.ConfigValue<Boolean> UPDATE_CONFIG = BUILDER
             .comment(
                     "If true, the client will also update the config folder when pressing the update button.",
@@ -61,7 +51,6 @@ public class Config {
     static final ModConfigSpec SPEC = BUILDER.build();
 
     public static int fileServerPort;
-    public static boolean filterServerSideMods;
 
     public static boolean updateConfig;
     public static boolean mirrorMods;
@@ -80,7 +69,6 @@ public class Config {
 
         // Update static values with configuration values
         fileServerPort = FILE_SERVER_PORT.get();
-        filterServerSideMods = FILTER_SERVER_MODS.get();
 
         updateConfig = UPDATE_CONFIG.get();
         mirrorMods = MIRROR_MODS.get();
@@ -89,7 +77,6 @@ public class Config {
         // Log configuration load
         SCS.LOGGER.info("Configuration loaded:");
         SCS.LOGGER.info("File Server Port: {}", fileServerPort);
-        SCS.LOGGER.info("Filter Server Mods: {}", filterServerSideMods);
         SCS.LOGGER.info("Update Config: {}", updateConfig);
         SCS.LOGGER.info("Mirror Mods: {}", mirrorMods);
         SCS.LOGGER.info("Mirror Config: {}", mirrorConfig);

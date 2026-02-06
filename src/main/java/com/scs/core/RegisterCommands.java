@@ -1,8 +1,5 @@
 package com.scs.core;
 
-import com.google.gson.JsonArray;
-import com.google.gson.JsonObject;
-import com.google.gson.JsonParser;
 import com.moandjiezana.toml.Toml;
 import com.mojang.brigadier.CommandDispatcher;
 import net.minecraft.commands.CommandSourceStack;
@@ -14,17 +11,10 @@ import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.io.InputStream;
-import java.net.URI;
-import java.net.URLEncoder;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.attribute.FileTime;
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.function.Predicate;
@@ -37,8 +27,6 @@ public class RegisterCommands {
 
     private static final Logger LOGGER = LoggerFactory.getLogger(RegisterCommands.class);
     private static final ExecutorService EXECUTOR = Executors.newSingleThreadExecutor();
-    private static final HttpClient HTTP_CLIENT = HttpClient.newHttpClient();
-    private static final Map<String, Boolean> MODRINTH_CACHE = new HashMap<>();
 
     private static final Path MODS_FOLDER = Path.of("mods");
     private static final Path CONFIG_FOLDER = Path.of("config");
@@ -115,25 +103,14 @@ public class RegisterCommands {
                     index++;
                     try {
                         String modName = getModNameFromJar(path);
-                        if (modName != null) {
-                            boolean exclude = Config.filterServerSideMods && isServerOnlyMod(modName);
-                            if (!exclude) {
-                                Path relativePath = MODS_FOLDER.relativize(path);
-                                ZipEntry zipEntry = new ZipEntry(relativePath.toString());
-                                zipOut.putNextEntry(zipEntry);
-                                Files.copy(path, zipOut);
-                                zipOut.closeEntry();
+                        Path relativePath = MODS_FOLDER.relativize(path);
+                        ZipEntry zipEntry = new ZipEntry(relativePath.toString());
+                        zipOut.putNextEntry(zipEntry);
+                        Files.copy(path, zipOut);
+                        zipOut.closeEntry();
 
-                                LOGGER.info("[{}/{}] Included mod: {} ({})",
-                                        index, total, modName, path.getFileName());
-                            } else {
-                                LOGGER.info("[{}/{}] Excluded mod: {} ({})",
-                                        index, total, modName, path.getFileName());
-                            }
-                        } else {
-                            LOGGER.warn("[{}/{}] Could not identify mod: {}",
-                                    index, total, path.getFileName());
-                        }
+                        LOGGER.info("[{}/{}] Included mod: {} ({})",
+                                index, total, modName, path.getFileName());
                     } catch (Exception e) {
                         LOGGER.error("Failed to process mod: " + path, e);
                     }
@@ -260,39 +237,5 @@ public class RegisterCommands {
             return jarPath.getFileName().toString();
         }
         return jarPath.getFileName().toString();
-    }
-
-    private static boolean isServerOnlyMod(String modName) {
-        if (MODRINTH_CACHE.containsKey(modName)) {
-            return MODRINTH_CACHE.get(modName);
-        }
-
-        try {
-            HttpRequest request = HttpRequest.newBuilder()
-                    .uri(URI.create("https://api.modrinth.com/v2/search?query=" + URLEncoder.encode(modName, "UTF-8")))
-                    .header("User-Agent", "SCS/https://github.com/Place-Boy/SCS/1.0.1-beta")
-                    .GET()
-                    .build();
-
-            HttpResponse<String> response = HTTP_CLIENT.send(request, HttpResponse.BodyHandlers.ofString());
-            JsonObject json = JsonParser.parseString(response.body()).getAsJsonObject();
-            JsonArray hits = json.getAsJsonArray("hits");
-
-            if (hits != null && hits.size() > 0) {
-                JsonObject mod = hits.get(0).getAsJsonObject();
-
-                String clientSide = mod.has("client_side") ? mod.get("client_side").getAsString() : "required";
-                String serverSide = mod.has("server_side") ? mod.get("server_side").getAsString() : "required";
-
-                boolean result = "unsupported".equalsIgnoreCase(clientSide) && "required".equalsIgnoreCase(serverSide);
-                MODRINTH_CACHE.put(modName, result);
-                return result;
-            }
-        } catch (Exception e) {
-            LOGGER.error("Failed to query Modrinth for: " + modName, e);
-        }
-
-        MODRINTH_CACHE.put(modName, false);
-        return false;
     }
 }

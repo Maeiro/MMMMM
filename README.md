@@ -52,7 +52,6 @@ Mod configuration
 Config file (COMMON): `config/scs-common.toml`
 
 - `fileServerPort` (int): file server port.
-- `filterServerMods` (bool): excludes server-only mods from `mods.zip`.
 - `updateConfig` (bool): updates `/config` alongside `/mods` (default: true).
 - `mirrorMods` (bool): mirrors `/mods` to `mods.zip` (removes files not in the zip).
 - `mirrorConfig` (bool): mirrors `/config` to `config.zip` (removes files not in the zip).
