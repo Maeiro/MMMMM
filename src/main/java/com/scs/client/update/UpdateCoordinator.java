@@ -1,6 +1,7 @@
 package com.scs.client.update;
 
 import com.scs.client.DownloadProgressScreen;
+import com.scs.client.ServerMetadata;
 import com.scs.core.Checksum;
 import com.scs.core.Config;
 import com.scs.core.SCS;
@@ -149,6 +150,9 @@ public final class UpdateCoordinator {
             try {
                 minecraft.execute(() -> progressScreen.startProcessing("Clearing cache...", "Removing shared-files and checksums for " + cachePaths.serverKey() + "..."));
                 ClearCacheResult result = clearCacheInternal(cachePaths);
+                if (serverKey != null && !serverKey.isBlank()) {
+                    ServerMetadata.removeMetadata(serverKey);
+                }
                 List<String> summary = List.of(
                         "Cache cleared successfully.",
                         "Server cache: " + cachePaths.serverKey(),

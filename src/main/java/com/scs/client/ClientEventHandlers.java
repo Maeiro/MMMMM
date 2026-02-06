@@ -40,6 +40,7 @@ public final class ClientEventHandlers {
 
         int buttonX = screen.width - BUTTON_X_OFFSET;
         int maxHeight = screen.height - BOTTOM_MARGIN;
+        boolean metadataUpdated = false;
 
         for (int i = 0; i < serverList.size(); i++) {
             int y = BUTTON_Y_START + (i * BUTTON_SPACING);
@@ -48,7 +49,14 @@ public final class ClientEventHandlers {
             }
 
             ServerData server = serverList.get(i);
+            if (ServerMetadata.setDefaultIfMissing(server.ip)) {
+                metadataUpdated = true;
+            }
             event.addListener(createUpdateButton(buttonX, y, server, screen));
+        }
+
+        if (metadataUpdated) {
+            ServerMetadata.saveMetadata();
         }
     }
 

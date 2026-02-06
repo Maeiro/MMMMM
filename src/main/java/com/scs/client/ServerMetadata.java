@@ -2,6 +2,7 @@ package com.scs.client;
 
 import com.google.gson.Gson;
 import com.google.gson.reflect.TypeToken;
+import com.scs.core.Config;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -9,6 +10,7 @@ import java.io.File;
 import java.io.FileReader;
 import java.io.FileWriter;
 import java.lang.reflect.Type;
+import java.net.URI;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
@@ -58,7 +60,42 @@ public class ServerMetadata {
     }
 
     public static String getMetadata(String serverIP) {
-        return serverMetadata.getOrDefault(serverIP, "");
+        String stored = serverMetadata.getOrDefault(serverIP, "");
+        if (stored != null && !stored.isBlank()) {
+            return stored;
+        }
+        return buildDefaultUrl(serverIP);
+    }
+
+    public static boolean setDefaultIfMissing(String serverIP) {
+        if (!isValidServerIP(serverIP)) {
+            return false;
+        }
+
+        String stored = serverMetadata.getOrDefault(serverIP, "");
+        if (stored != null && !stored.isBlank()) {
+            return false;
+        }
+
+        String defaultUrl = buildDefaultUrl(serverIP);
+        if (defaultUrl.isBlank()) {
+            return false;
+        }
+
+        serverMetadata.put(serverIP, defaultUrl);
+        return true;
+    }
+
+    public static boolean removeMetadata(String serverIP) {
+        if (!isValidServerIP(serverIP)) {
+            return false;
+        }
+        if (serverMetadata.remove(serverIP) != null) {
+            saveMetadata();
+            LOGGER.info("Metadata removed for server: {}", serverIP);
+            return true;
+        }
+        return false;
     }
 
     public static void setMetadata(String serverIP, String value) {
@@ -81,5 +118,67 @@ public class ServerMetadata {
 
     public static Map<String, String> getAllMetadata() {
         return Collections.unmodifiableMap(serverMetadata);
+    }
+
+    private static String buildDefaultUrl(String serverIP) {
+        if (!isValidServerIP(serverIP)) {
+            return "";
+        }
+
+        String host = extractHost(serverIP.trim());
+        if (host.isBlank()) {
+            return "";
+        }
+
+        int port = Config.fileServerPort > 0 ? Config.fileServerPort : 25566;
+        String hostForUrl = host;
+        if (hostForUrl.contains(":") && !(hostForUrl.startsWith("[") && hostForUrl.endsWith("]"))) {
+            hostForUrl = "[" + hostForUrl + "]";
+        }
+        return "http://" + hostForUrl + ":" + port;
+    }
+
+    private static String extractHost(String serverIP) {
+        String trimmed = serverIP.trim();
+        if (trimmed.isBlank()) {
+            return "";
+        }
+
+        if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) {
+            try {
+                URI uri = URI.create(trimmed);
+                String host = uri.getHost();
+                if (host != null && !host.isBlank()) {
+                    return host;
+                }
+            } catch (Exception ignored) {
+            }
+        }
+
+        if (trimmed.startsWith("[") && trimmed.contains("]")) {
+            int end = trimmed.indexOf(']');
+            if (end > 1) {
+                return trimmed.substring(1, end);
+            }
+        }
+
+        int colonCount = 0;
+        for (int i = 0; i < trimmed.length(); i++) {
+            if (trimmed.charAt(i) == ':') {
+                colonCount++;
+            }
+        }
+
+        if (colonCount == 1) {
+            int lastColon = trimmed.lastIndexOf(':');
+            String portPart = trimmed.substring(lastColon + 1);
+            if (!portPart.isBlank() && portPart.chars().allMatch(Character::isDigit)) {
+                return trimmed.substring(0, lastColon);
+            }
+        } else if (colonCount > 1) {
+            return trimmed;
+        }
+
+        return trimmed;
     }
 }
