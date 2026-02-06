@@ -22,6 +22,7 @@ import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.nio.file.StandardOpenOption;
 import java.util.Collections;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.ArrayList;
@@ -117,6 +118,7 @@ public final class UpdateCoordinator {
         String modsUrl = buildDownloadUrl(updateBaseUrl, MOD_ZIP_NAME);
         if (modsUrl == null) {
             LOGGER.info("No mod URL found for {}", updateBaseUrl);
+            showMissingUpdateUrlMessage(minecraft, returnScreen, updateBaseUrl);
             return;
         }
 
@@ -125,6 +127,88 @@ public final class UpdateCoordinator {
 
         ExecutorService executor = Executors.newSingleThreadExecutor();
         executor.execute(() -> performUpdateFlow(updateBaseUrl, modsUrl, minecraft, progressScreen, executor));
+    }
+
+    public static void clearCache(Screen returnScreen) {
+        Minecraft minecraft = Minecraft.getInstance();
+        DownloadProgressScreen progressScreen = new DownloadProgressScreen("cache", "local", returnScreen);
+        minecraft.setScreen(progressScreen);
+
+        ExecutorService executor = Executors.newSingleThreadExecutor();
+        executor.execute(() -> {
+            try {
+                minecraft.execute(() -> progressScreen.startProcessing("Clearing cache...", "Removing shared-files and checksums..."));
+                ClearCacheResult result = clearCacheInternal();
+                List<String> summary = List.of(
+                        "Cache cleared successfully.",
+                        "Deleted files: " + result.deletedFiles,
+                        "Deleted directories: " + result.deletedDirs
+                );
+                minecraft.execute(() -> progressScreen.showSummary("Cache cleared", summary));
+            } catch (Exception e) {
+                LOGGER.error("Failed to clear cache", e);
+                minecraft.execute(() -> progressScreen.showSummary(
+                        "Cache clear failed",
+                        List.of("Failed to clear cache. Check logs for details.")
+                ));
+            } finally {
+                executor.shutdown();
+            }
+        });
+    }
+
+    private static void showMissingUpdateUrlMessage(Minecraft minecraft, Screen returnScreen, String updateBaseUrl) {
+        String metadataValue = (updateBaseUrl == null || updateBaseUrl.isBlank()) ? "<empty>" : updateBaseUrl;
+        DownloadProgressScreen progressScreen = new DownloadProgressScreen("mods", "server", returnScreen);
+        minecraft.setScreen(progressScreen);
+        progressScreen.showSummary(
+                "Update unavailable",
+                List.of(
+                        "No update URL configured for this server.",
+                        "Open server settings and configure an update URL."
+                ),
+                List.of("Metadata value: " + metadataValue)
+        );
+    }
+
+    private static ClearCacheResult clearCacheInternal() throws IOException {
+        int deletedFiles = 0;
+        int deletedDirs = 0;
+
+        Path[] cacheFiles = {MOD_CHECKSUM_FILE, CONFIG_CHECKSUM_FILE};
+        for (Path cacheFile : cacheFiles) {
+            if (Files.deleteIfExists(cacheFile)) {
+                deletedFiles++;
+            }
+        }
+
+        Path sharedFiles = Path.of("SCS/shared-files");
+        if (Files.exists(sharedFiles)) {
+            try (var stream = Files.walk(sharedFiles).sorted(Comparator.reverseOrder())) {
+                for (Path path : stream.toList()) {
+                    if (Files.isDirectory(path)) {
+                        Files.deleteIfExists(path);
+                        deletedDirs++;
+                    } else {
+                        Files.deleteIfExists(path);
+                        deletedFiles++;
+                    }
+                }
+            }
+        }
+
+        Files.createDirectories(sharedFiles);
+        return new ClearCacheResult(deletedFiles, deletedDirs);
+    }
+
+    private static final class ClearCacheResult {
+        private final int deletedFiles;
+        private final int deletedDirs;
+
+        private ClearCacheResult(int deletedFiles, int deletedDirs) {
+            this.deletedFiles = deletedFiles;
+            this.deletedDirs = deletedDirs;
+        }
     }
 
     private static void performUpdateFlow(
@@ -612,7 +696,7 @@ public final class UpdateCoordinator {
                     summaryExtras.add("Mods removed by list: " + String.join(", ", removal.removed));
                 }
                 if (!removal.missing.isEmpty()) {
-                    summaryExtras.add("Mods not found for removal: " + String.join(", ", removal.missing));
+                    LOGGER.info("Mods requested for removal but not found: {}", String.join(", ", removal.missing));
                 }
                 if (!removal.invalid.isEmpty()) {
                     summaryExtras.add("Invalid entries in " + MODS_REMOVE_LIST_NAME + ": " + String.join(", ", removal.invalid));
