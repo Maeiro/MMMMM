@@ -16,9 +16,11 @@ Credits
 Key features
 ------------
 - In-game update button on the multiplayer server list.
+- Confirmation screen (Yes/No) before starting the update, with quick access to cache cleanup.
 - modId-based sync: avoids duplicates when the .jar filename changes.
 - Optional /config update (enabled by default).
 - Optional removal list in `mods.zip` to delete specific client jars.
+- Per-server cache isolation (each server has its own checksums and downloaded zips).
 - Built-in file server to host `mods.zip` and `config.zip`.
 
 Server usage
@@ -42,6 +44,7 @@ Client usage
 2) In **Download URL**, enter the server file host (IP or URL).
    - Example: `127.0.0.1:25566` or `http://myserver:25566`
 3) Return to the list and click **Update**.
+4) Confirm the update (Yes/No). Use **Clear cache** if you need to reset cached zips/checksums.
 
 Mod configuration
 -----------------
@@ -59,6 +62,7 @@ How updates work
 - If `modsToRemoveFromTheClient.json` exists in `mods.zip`, any jar listed there is
   removed from `/mods` during the update.
 - If `updateConfig=true`, it also downloads `config.zip` and extracts it into `/config`.
+- Update UI shows summary and details with scroll support for long change lists.
 
 Removal list format
 -------------------
@@ -75,4 +79,12 @@ of jar file names:
 Tips / Troubleshooting
 ----------------------
 - If `fileServerPort` changes, the file server restarts automatically.
-- If the download has no progress/ETA, the server may be missing `Content-Length`.
+- If a server URL is missing, the update flow will show a message instead of starting.
+- Use **Clear cache** to remove cached zips/checksums if something gets stuck.
+
+Cache layout
+------------
+Each server has its own cache folder:
+- `SCS/servers/<server-id>/shared-files/`
+- `SCS/servers/<server-id>/mods_checksums.json`
+- `SCS/servers/<server-id>/config_checksums.json`
