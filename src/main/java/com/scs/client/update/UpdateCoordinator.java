@@ -493,11 +493,10 @@ public final class UpdateCoordinator {
             List<String> summaryExtras
     ) throws Exception {
         Map<String, List<Path>> existingModsById = indexInstalledModsById(destination, progressScreen);
-        LOGGER.info("Indexed {} modIds in {}", existingModsById.size(), destination);
-
         Set<String> extractedFiles = new HashSet<>();
         List<String> modsToRemove = new ArrayList<>();
         boolean warnedSelfUpdate = false;
+
         try (ZipFile zipFile = new ZipFile(zipPath.toFile())) {
             List<? extends ZipEntry> entries = Collections.list(zipFile.entries());
             int total = entries.size();
@@ -506,10 +505,12 @@ public final class UpdateCoordinator {
             for (ZipEntry entry : entries) {
                 current++;
                 String entryName = entry.getName();
+
                 if (MODS_REMOVE_LIST_NAME.equals(entryName)) {
                     modsToRemove = parseModsRemovalList(zipFile, entry);
                     continue;
                 }
+
                 Path entryPath = destination.resolve(entryName).normalize();
                 if (!entryPath.startsWith(destination)) {
                     throw new IOException("Blocked zip entry outside destination: " + entryName);
@@ -527,49 +528,32 @@ public final class UpdateCoordinator {
                 }
 
                 Files.createDirectories(entryPath.getParent());
+                boolean isJar = entryName.toLowerCase(Locale.ROOT).endsWith(".jar");
 
-                boolean isJar = entryName.toLowerCase().endsWith(".jar");
                 if (isJar) {
                     byte[] jarBytes;
                     try (InputStream is = zipFile.getInputStream(entry)) {
                         jarBytes = is.readAllBytes();
                     }
 
+                    Set<String> modIds = Collections.emptySet();
+                    Map<String, String> modVersions = Collections.emptyMap();
                     try {
                         Toml toml = readTomlFromJarBytes(jarBytes);
-                        Set<String> modIds = extractModIdsFromToml(toml);
-                        Map<String, String> modVersions = extractModVersionsFromToml(toml);
-                        if (modIds.isEmpty()) {
-                            LOGGER.warn("Could not identify modId for {} - extracting without duplicate cleanup.", entryName);
-                        } else {
-                            LOGGER.info("Zip entry {} has modId(s): {}", entryName, String.join(", ", modIds));
-                            for (String modId : modIds) {
-                                if (modId == null || modId.isBlank()) {
-                                    continue;
-                                }
-                                // Remove any installed jar with the same modId (including jars extracted earlier in this run),
-                                // except the current target file name.
-                                List<Path> installed = existingModsById.getOrDefault(modId, Collections.emptyList());
-                                for (Path installedJar : installed) {
-                                    if (installedJar.equals(entryPath)) {
-                                        continue;
-                                    }
-                                    try {
-                                        if (Files.deleteIfExists(installedJar)) {
-                                            LOGGER.info("Removed old mod jar for modId {}: {}", modId, installedJar.getFileName());
-                                        }
-                                    } catch (Exception e) {
-                                        LOGGER.warn("Failed to remove old mod jar {} for modId {}", installedJar, modId, e);
-                                    }
-                                }
+                        modIds = extractModIdsFromToml(toml);
+                        modVersions = extractModVersionsFromToml(toml);
+                    } catch (Exception e) {
+                        LOGGER.warn("Failed to identify modId for {} - extracting without duplicate cleanup.", entryName, e);
+                    }
 
-                                // Track the jar we're about to write so later duplicates (if any) can replace it.
-                                existingModsById.put(modId, new ArrayList<>(List.of(entryPath)));
-                            }
-                        }
+                    if (!modIds.isEmpty()) {
+                        LOGGER.info("Zip entry {} has modId(s): {}", entryName, String.join(", ", modIds));
+                    }
 
+                    boolean isSelfJar = modIds.contains(SCS.MODID.toLowerCase(Locale.ROOT));
+                    if (isSelfJar) {
                         if (!warnedSelfUpdate && summaryExtras != null) {
-                            String zipVersion = modVersions.get(SCS.MODID);
+                            String zipVersion = modVersions.get(SCS.MODID.toLowerCase(Locale.ROOT));
                             if (zipVersion != null
                                     && currentModVersion != null
                                     && !currentModVersion.isBlank()
@@ -578,13 +562,35 @@ public final class UpdateCoordinator {
                                 int comparison = compareVersions(zipVersion, currentModVersion);
                                 if (comparison != 0) {
                                     summaryExtras.add("Warning: mods.zip contains SCS " + zipVersion
-                                            + " (current: " + currentModVersion + "). It will overwrite on disk and apply after restart.");
+                                            + " (current: " + currentModVersion + "). It will be ignored while running and should be updated with the game closed.");
                                     warnedSelfUpdate = true;
                                 }
                             }
                         }
-                    } catch (Exception e) {
-                        LOGGER.warn("Failed to identify modId for {} - extracting without duplicate cleanup.", entryName, e);
+                        LOGGER.info("Skipping SCS self-jar update while mod is running: {}", entryName);
+                        continue;
+                    }
+
+                    for (String modId : modIds) {
+                        if (modId == null || modId.isBlank()) {
+                            continue;
+                        }
+
+                        List<Path> installed = existingModsById.getOrDefault(modId, Collections.emptyList());
+                        for (Path installedJar : installed) {
+                            if (installedJar.equals(entryPath)) {
+                                continue;
+                            }
+                            try {
+                                if (Files.deleteIfExists(installedJar)) {
+                                    LOGGER.info("Removed old mod jar for modId {}: {}", modId, installedJar.getFileName());
+                                }
+                            } catch (Exception e) {
+                                LOGGER.warn("Failed to remove old mod jar {} for modId {}", installedJar, modId, e);
+                            }
+                        }
+
+                        existingModsById.put(modId, new ArrayList<>(List.of(entryPath)));
                     }
 
                     Files.write(entryPath, jarBytes, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
@@ -616,7 +622,6 @@ public final class UpdateCoordinator {
 
         return extractedFiles;
     }
-
     private static Map<String, List<Path>> indexInstalledModsById(
             Path modsDirectory,
             DownloadProgressScreen progressScreen
@@ -629,7 +634,7 @@ public final class UpdateCoordinator {
         List<Path> jarPaths;
         try (var stream = Files.walk(modsDirectory)) {
             jarPaths = stream
-                    .filter(path -> Files.isRegularFile(path) && path.toString().toLowerCase().endsWith(".jar"))
+                    .filter(path -> Files.isRegularFile(path) && path.toString().toLowerCase(Locale.ROOT).endsWith(".jar"))
                     .collect(Collectors.toList());
         } catch (Exception e) {
             LOGGER.warn("Failed to index installed mods in {}", modsDirectory, e);
@@ -637,14 +642,17 @@ public final class UpdateCoordinator {
         }
 
         int total = jarPaths.size();
-        int current = 0;
-        for (Path jarPath : jarPaths) {
-            current++;
-            int progress = total > 0 ? (int) ((current * 100L) / total) : 0;
-            String detail = total > 0
-                    ? String.format("%d/%d: %s", current, total, jarPath.getFileName())
-                    : jarPath.getFileName().toString();
-            updateProcessing(progressScreen, "Indexing installed mods...", detail, progress, total > 0);
+        for (int i = 0; i < total; i++) {
+            Path jarPath = jarPaths.get(i);
+            int current = i + 1;
+
+            if (current == 1 || current == total || current % 10 == 0) {
+                int progress = total > 0 ? (int) ((current * 100L) / total) : 0;
+                String detail = total > 0
+                        ? String.format("%d/%d: %s", current, total, jarPath.getFileName())
+                        : jarPath.getFileName().toString();
+                updateProcessing(progressScreen, "Indexing installed mods...", detail, progress, total > 0);
+            }
 
             try {
                 Set<String> modIds = getModIdsFromJarFile(jarPath);
@@ -661,7 +669,6 @@ public final class UpdateCoordinator {
 
         return byId;
     }
-
     private static Set<String> getModIdsFromJarFile(Path jarPath) throws Exception {
         try (ZipFile zipFile = new ZipFile(jarPath.toFile())) {
             ZipEntry entry = zipFile.getEntry("META-INF/neoforge.mods.toml");
@@ -926,43 +933,53 @@ public final class UpdateCoordinator {
             return new RemovalResult(List.of(), List.of(), invalid);
         }
 
-        List<String> removed = new ArrayList<>();
-        List<String> missing;
-        Set<String> removedLower = new HashSet<>();
-
-        int current = 0;
+        List<Path> files;
         try (var stream = Files.walk(modsDirectory)) {
-            var iterator = stream.filter(Files::isRegularFile).iterator();
-            while (iterator.hasNext()) {
-                Path path = iterator.next();
-                current++;
-                String fileName = path.getFileName().toString();
-                updateProcessing(progressScreen, "Removing mods...", "Checked " + current + ": " + fileName, 0, false);
-
-                String key = fileName.toLowerCase(Locale.ROOT);
-                if (requested.containsKey(key)) {
-                    try {
-                        if (Files.deleteIfExists(path)) {
-                            removed.add(fileName);
-                            removedLower.add(key);
-                        }
-                    } catch (Exception e) {
-                        LOGGER.warn("Failed to remove mod {}", fileName, e);
-                    }
-                }
-            }
+            files = stream.filter(Files::isRegularFile).collect(Collectors.toList());
         } catch (Exception e) {
-            LOGGER.warn("Failed to remove mods listed in {}", MODS_REMOVE_LIST_NAME, e);
+            LOGGER.warn("Failed to list files for removal in {}", modsDirectory, e);
+            files = List.of();
         }
 
-        missing = requested.entrySet().stream()
+        List<String> removed = new ArrayList<>();
+        Set<String> removedLower = new HashSet<>();
+        int total = files.size();
+
+        for (int i = 0; i < total; i++) {
+            Path path = files.get(i);
+            String fileName = path.getFileName().toString();
+            int current = i + 1;
+
+            if (current == 1 || current == total || current % 10 == 0) {
+                int progress = total > 0 ? (int) ((current * 100L) / total) : 0;
+                String detail = total > 0
+                        ? String.format("%d/%d: %s", current, total, fileName)
+                        : fileName;
+                updateProcessing(progressScreen, "Removing mods...", detail, progress, total > 0);
+            }
+
+            String key = fileName.toLowerCase(Locale.ROOT);
+            if (!requested.containsKey(key)) {
+                continue;
+            }
+
+            try {
+                if (Files.deleteIfExists(path)) {
+                    removed.add(fileName);
+                    removedLower.add(key);
+                }
+            } catch (Exception e) {
+                LOGGER.warn("Failed to remove mod {}", fileName, e);
+            }
+        }
+
+        List<String> missing = requested.entrySet().stream()
                 .filter(entry -> !removedLower.contains(entry.getKey()))
                 .map(Map.Entry::getValue)
                 .collect(Collectors.toList());
 
         return new RemovalResult(removed, missing, invalid);
     }
-
     private static String normalizeFileName(String name) {
         if (name == null) {
             return "";
