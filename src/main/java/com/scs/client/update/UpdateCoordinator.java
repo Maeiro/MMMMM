@@ -110,10 +110,13 @@ public final class UpdateCoordinator {
             return diff != null && !diff.isEmpty();
         }
     }
-
     public static void startUpdate(String updateBaseUrl) {
+        startUpdate(updateBaseUrl, null);
+    }
+
+    public static void startUpdate(String updateBaseUrl, Screen returnScreenOverride) {
         Minecraft minecraft = Minecraft.getInstance();
-        Screen returnScreen = minecraft.screen;
+        Screen returnScreen = returnScreenOverride != null ? returnScreenOverride : minecraft.screen;
 
         String modsUrl = buildDownloadUrl(updateBaseUrl, MOD_ZIP_NAME);
         if (modsUrl == null) {
