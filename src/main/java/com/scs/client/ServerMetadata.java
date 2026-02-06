@@ -1,4 +1,4 @@
-package com.mmmmm.client;
+package com.scs.client;
 
 import com.google.gson.Gson;
 import com.google.gson.reflect.TypeToken;
@@ -14,9 +14,10 @@ import java.util.HashMap;
 import java.util.Map;
 
 public class ServerMetadata {
-    private static final File METADATA_FILE = new File("MMMMM/server_metadata.json");
+    private static final File METADATA_FILE = new File("SCS/server_metadata.json");
     private static final Gson GSON = new Gson();
     private static final Logger LOGGER = LoggerFactory.getLogger(ServerMetadata.class);
+    private static final Type METADATA_TYPE = new TypeToken<Map<String, String>>() {}.getType();
     private static Map<String, String> serverMetadata = new HashMap<>();
 
     static {
@@ -26,8 +27,7 @@ public class ServerMetadata {
     private static void loadMetadata() {
         if (METADATA_FILE.exists()) {
             try (FileReader reader = new FileReader(METADATA_FILE)) {
-                Type type = new TypeToken<Map<String, String>>() {}.getType();
-                Map<String, String> loadedData = GSON.fromJson(reader, type);
+                Map<String, String> loadedData = GSON.fromJson(reader, METADATA_TYPE);
                 if (loadedData != null) {
                     serverMetadata = loadedData;
                 }

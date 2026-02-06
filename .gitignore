@@ -23,5 +23,6 @@ run
 runs
 run-data
 .vscode
+.eclipse
 
 repo

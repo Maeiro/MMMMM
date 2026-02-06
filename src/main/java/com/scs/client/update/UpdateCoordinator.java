@@ -1,20 +1,13 @@
-package com.mmmmm.client;
+package com.scs.client.update;
 
-import com.mmmmm.core.Checksum;
-import com.mmmmm.core.Config;
-import com.mmmmm.core.MMMMM;
+import com.scs.client.DownloadProgressScreen;
+import com.scs.core.Checksum;
+import com.scs.core.Config;
+import com.scs.core.SCS;
 import net.minecraft.client.Minecraft;
-import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.screens.Screen;
-import net.minecraft.client.gui.screens.multiplayer.JoinMultiplayerScreen;
-import net.minecraft.client.multiplayer.ServerData;
-import net.minecraft.client.multiplayer.ServerList;
 import net.minecraft.network.chat.Component;
-import net.neoforged.api.distmarker.Dist;
-import net.neoforged.fml.common.EventBusSubscriber;
 import net.neoforged.fml.ModList;
-import net.neoforged.neoforge.client.event.ScreenEvent.Init.Post;
-import net.neoforged.bus.api.SubscribeEvent;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -29,6 +22,7 @@ import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.nio.file.StandardOpenOption;
 import java.util.Collections;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.ArrayList;
@@ -42,34 +36,35 @@ import java.util.concurrent.Executors;
 import java.util.zip.ZipFile;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
-import com.moandjiezana.toml.Toml;
 import org.json.JSONArray;
+import com.moandjiezana.toml.Toml;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 
-@EventBusSubscriber(modid = MMMMM.MODID, bus = EventBusSubscriber.Bus.GAME, value = Dist.CLIENT)
-public class ClientEventHandlers {
+public final class UpdateCoordinator {
 
     private static final int CONNECTION_TIMEOUT_MS = 5000;
     private static final String MOD_ZIP_NAME = "mods.zip";
     private static final String CONFIG_ZIP_NAME = "config.zip";
     private static final String MODS_REMOVE_LIST_NAME = "modsToRemoveFromTheClient.json";
-    private static final Path MOD_DOWNLOAD_PATH = Path.of("MMMMM/shared-files", MOD_ZIP_NAME);
+    private static final Path SERVER_CACHE_ROOT = Path.of("SCS/servers");
     private static final Path MOD_UNZIP_DESTINATION = Path.of("mods");
-    private static final Path MOD_CHECKSUM_FILE = Path.of("MMMMM/mods_checksums.json");
-    private static final Path CONFIG_DOWNLOAD_PATH = Path.of("MMMMM/shared-files", CONFIG_ZIP_NAME);
     private static final Path CONFIG_UNZIP_DESTINATION = Path.of("config");
-    private static final Path CONFIG_CHECKSUM_FILE = Path.of("MMMMM/config_checksums.json");
-    private static final Logger LOGGER = LoggerFactory.getLogger(ClientEventHandlers.class);
+    private static final Logger LOGGER = LoggerFactory.getLogger(UpdateCoordinator.class);
     private static final int MAX_CHANGE_LIST_ITEMS = 5;
+
+    private UpdateCoordinator() {
+    }
 
     private static final class UpdateSummary {
         private final String title;
-        private final List<String> lines;
+        private final List<String> summaryLines;
+        private final List<String> detailLines;
 
-        private UpdateSummary(String title, List<String> lines) {
+        private UpdateSummary(String title, List<String> summaryLines, List<String> detailLines) {
             this.title = title;
-            this.lines = lines;
+            this.summaryLines = summaryLines;
+            this.detailLines = detailLines;
         }
     }
 
@@ -112,50 +107,23 @@ public class ClientEventHandlers {
             return diff != null && !diff.isEmpty();
         }
     }
-
-    @SubscribeEvent
-    public static void onMultiplayerScreenInit(Post event) {
-        if (!(event.getScreen() instanceof JoinMultiplayerScreen screen)) {
-            return;
-        }
-
-        LOGGER.info("Multiplayer screen initialized. Adding server buttons.");
-        ServerList serverList = new ServerList(Minecraft.getInstance());
-        serverList.load();
-
-        int buttonX = screen.width - 55;
-        int buttonY = 50;
-        int buttonSpacing = 24;
-        int maxHeight = screen.height - 50;
-
-        for (int i = 0; i < serverList.size(); i++) {
-            int yOffset = buttonY + (i * buttonSpacing);
-            if (yOffset + 20 > maxHeight) break;
-
-            ServerData server = serverList.get(i);
-            Button serverButton = createServerButton(buttonX, yOffset, server);
-            event.addListener(serverButton);
-        }
+    public static void startUpdate(String updateBaseUrl) {
+        startUpdate(updateBaseUrl, null, null);
     }
 
-    private static Button createServerButton(int x, int y, ServerData server) {
-        return Button.builder(
-                Component.literal("Update"),
-                (btn) -> {
-                    String updateBaseUrl = ServerMetadata.getMetadata(server.ip); // IP or full URL
-                    LOGGER.info("Update button clicked for server: {}", updateBaseUrl);
-                    runUpdateForServer(updateBaseUrl);
-                }
-        ).bounds(x, y, 50, 20).build();
+    public static void startUpdate(String updateBaseUrl, Screen returnScreenOverride) {
+        startUpdate(updateBaseUrl, returnScreenOverride, null);
     }
 
-    private static void runUpdateForServer(String updateBaseUrl) {
+    public static void startUpdate(String updateBaseUrl, Screen returnScreenOverride, String serverKey) {
         Minecraft minecraft = Minecraft.getInstance();
-        Screen returnScreen = minecraft.screen;
+        Screen returnScreen = returnScreenOverride != null ? returnScreenOverride : minecraft.screen;
+        ServerCachePaths cachePaths = buildServerCachePaths(resolveServerKey(serverKey, updateBaseUrl));
 
         String modsUrl = buildDownloadUrl(updateBaseUrl, MOD_ZIP_NAME);
         if (modsUrl == null) {
             LOGGER.info("No mod URL found for {}", updateBaseUrl);
+            showMissingUpdateUrlMessage(minecraft, returnScreen, updateBaseUrl, cachePaths.serverKey());
             return;
         }
 
@@ -163,7 +131,187 @@ public class ClientEventHandlers {
         minecraft.setScreen(progressScreen);
 
         ExecutorService executor = Executors.newSingleThreadExecutor();
-        executor.execute(() -> performUpdateFlow(updateBaseUrl, modsUrl, minecraft, progressScreen, executor));
+        executor.execute(() -> performUpdateFlow(updateBaseUrl, modsUrl, minecraft, progressScreen, executor, cachePaths));
+    }
+
+    public static void clearCache(Screen returnScreen) {
+        clearCache(returnScreen, null);
+    }
+
+    public static void clearCache(Screen returnScreen, String serverKey) {
+        Minecraft minecraft = Minecraft.getInstance();
+        ServerCachePaths cachePaths = buildServerCachePaths(resolveServerKey(serverKey, null));
+        DownloadProgressScreen progressScreen = new DownloadProgressScreen("cache", "local", returnScreen);
+        minecraft.setScreen(progressScreen);
+
+        ExecutorService executor = Executors.newSingleThreadExecutor();
+        executor.execute(() -> {
+            try {
+                minecraft.execute(() -> progressScreen.startProcessing("Clearing cache...", "Removing shared-files and checksums for " + cachePaths.serverKey() + "..."));
+                ClearCacheResult result = clearCacheInternal(cachePaths);
+                List<String> summary = List.of(
+                        "Cache cleared successfully.",
+                        "Server cache: " + cachePaths.serverKey(),
+                        "Deleted files: " + result.deletedFiles,
+                        "Deleted directories: " + result.deletedDirs
+                );
+                minecraft.execute(() -> progressScreen.showSummary("Cache cleared", summary));
+            } catch (Exception e) {
+                LOGGER.error("Failed to clear cache", e);
+                minecraft.execute(() -> progressScreen.showSummary(
+                        "Cache clear failed",
+                        List.of("Failed to clear cache. Check logs for details.")
+                ));
+            } finally {
+                executor.shutdown();
+            }
+        });
+    }
+
+    private static void showMissingUpdateUrlMessage(Minecraft minecraft, Screen returnScreen, String updateBaseUrl, String serverKey) {
+        String metadataValue = (updateBaseUrl == null || updateBaseUrl.isBlank()) ? "<empty>" : updateBaseUrl;
+        DownloadProgressScreen progressScreen = new DownloadProgressScreen("mods", "server", returnScreen);
+        minecraft.setScreen(progressScreen);
+        progressScreen.showSummary(
+                "Update unavailable",
+                List.of(
+                        "No update URL configured for this server.",
+                        "Open server settings and configure an update URL.",
+                        "Server cache id: " + serverKey
+                ),
+                List.of("Metadata value: " + metadataValue)
+        );
+    }
+
+    private static ClearCacheResult clearCacheInternal(ServerCachePaths cachePaths) throws IOException {
+        int deletedFiles = 0;
+        int deletedDirs = 0;
+
+        Path[] cacheFiles = {cachePaths.modChecksumFile(), cachePaths.configChecksumFile()};
+        for (Path cacheFile : cacheFiles) {
+            if (Files.deleteIfExists(cacheFile)) {
+                deletedFiles++;
+            }
+        }
+
+        if (Files.exists(cachePaths.sharedFilesDir())) {
+            try (var stream = Files.walk(cachePaths.sharedFilesDir()).sorted(Comparator.reverseOrder())) {
+                for (Path path : stream.toList()) {
+                    if (Files.isDirectory(path)) {
+                        Files.deleteIfExists(path);
+                        deletedDirs++;
+                    } else {
+                        Files.deleteIfExists(path);
+                        deletedFiles++;
+                    }
+                }
+            }
+        }
+
+        Files.createDirectories(cachePaths.sharedFilesDir());
+        return new ClearCacheResult(deletedFiles, deletedDirs);
+    }
+
+    private static String resolveServerKey(String serverKey, String updateBaseUrl) {
+        if (serverKey != null && !serverKey.isBlank()) {
+            return serverKey;
+        }
+        if (updateBaseUrl != null && !updateBaseUrl.isBlank()) {
+            return updateBaseUrl;
+        }
+        return "default";
+    }
+
+    private static ServerCachePaths buildServerCachePaths(String serverKey) {
+        String safeServerKey = sanitizeServerKey(serverKey);
+        Path serverRoot = SERVER_CACHE_ROOT.resolve(safeServerKey);
+        Path sharedFilesDir = serverRoot.resolve("shared-files");
+        return new ServerCachePaths(
+                serverKey,
+                serverRoot,
+                sharedFilesDir,
+                sharedFilesDir.resolve(MOD_ZIP_NAME),
+                serverRoot.resolve("mods_checksums.json"),
+                sharedFilesDir.resolve(CONFIG_ZIP_NAME),
+                serverRoot.resolve("config_checksums.json")
+        );
+    }
+
+    private static String sanitizeServerKey(String serverKey) {
+        String raw = (serverKey == null || serverKey.isBlank()) ? "default" : serverKey.trim();
+        String normalized = raw.toLowerCase(Locale.ROOT).replaceAll("[^a-z0-9._-]", "_");
+        if (normalized.isBlank()) {
+            normalized = "default";
+        }
+        if (normalized.length() > 48) {
+            normalized = normalized.substring(0, 48);
+        }
+        return normalized + "_" + Integer.toHexString(raw.hashCode());
+    }
+
+    private static final class ClearCacheResult {
+        private final int deletedFiles;
+        private final int deletedDirs;
+
+        private ClearCacheResult(int deletedFiles, int deletedDirs) {
+            this.deletedFiles = deletedFiles;
+            this.deletedDirs = deletedDirs;
+        }
+    }
+    private static final class ServerCachePaths {
+        private final String serverKey;
+        private final Path serverRoot;
+        private final Path sharedFilesDir;
+        private final Path modDownloadPath;
+        private final Path modChecksumFile;
+        private final Path configDownloadPath;
+        private final Path configChecksumFile;
+
+        private ServerCachePaths(
+                String serverKey,
+                Path serverRoot,
+                Path sharedFilesDir,
+                Path modDownloadPath,
+                Path modChecksumFile,
+                Path configDownloadPath,
+                Path configChecksumFile
+        ) {
+            this.serverKey = serverKey;
+            this.serverRoot = serverRoot;
+            this.sharedFilesDir = sharedFilesDir;
+            this.modDownloadPath = modDownloadPath;
+            this.modChecksumFile = modChecksumFile;
+            this.configDownloadPath = configDownloadPath;
+            this.configChecksumFile = configChecksumFile;
+        }
+
+        private String serverKey() {
+            return serverKey;
+        }
+
+        private Path serverRoot() {
+            return serverRoot;
+        }
+
+        private Path sharedFilesDir() {
+            return sharedFilesDir;
+        }
+
+        private Path modDownloadPath() {
+            return modDownloadPath;
+        }
+
+        private Path modChecksumFile() {
+            return modChecksumFile;
+        }
+
+        private Path configDownloadPath() {
+            return configDownloadPath;
+        }
+
+        private Path configChecksumFile() {
+            return configChecksumFile;
+        }
     }
 
     private static void performUpdateFlow(
@@ -171,7 +319,8 @@ public class ClientEventHandlers {
             String modsUrl,
             Minecraft minecraft,
             DownloadProgressScreen progressScreen,
-            ExecutorService executor
+            ExecutorService executor,
+            ServerCachePaths cachePaths
     ) {
         UpdateOutcome modsOutcome = UpdateOutcome.failed();
         UpdateOutcome configOutcome = Config.updateConfig ? UpdateOutcome.failed() : UpdateOutcome.success(null);
@@ -180,6 +329,8 @@ public class ClientEventHandlers {
         String currentModVersion = getCurrentModVersion();
 
         try {
+            Files.createDirectories(cachePaths.serverRoot());
+            Files.createDirectories(cachePaths.sharedFilesDir());
             LOGGER.info("Starting mod download from: {}", modsUrl);
 
             modsOutcome = downloadAndApplyZipUpdate(
@@ -187,10 +338,11 @@ public class ClientEventHandlers {
                     progressScreen,
                     modsUrl,
                     "mods",
-                    MOD_DOWNLOAD_PATH,
+                    cachePaths.modDownloadPath(),
                     MOD_UNZIP_DESTINATION,
-                    MOD_CHECKSUM_FILE,
+                    cachePaths.modChecksumFile(),
                     true,
+                    Config.mirrorMods,
                     currentModVersion,
                     summaryExtras
             );
@@ -201,7 +353,7 @@ public class ClientEventHandlers {
             }
 
             if (Config.updateConfig) {
-                configOutcome = downloadConfigUpdate(updateBaseUrl, minecraft, progressScreen);
+                configOutcome = downloadConfigUpdate(updateBaseUrl, minecraft, progressScreen, cachePaths);
                 if (configOutcome.isCancelled()) {
                     cancelled = true;
                     return;
@@ -210,8 +362,8 @@ public class ClientEventHandlers {
         } catch (Exception e) {
             LOGGER.error("Failed to download or extract mods", e);
             UpdateSummary summary = buildUpdateSummary(updateBaseUrl, modsOutcome, configOutcome, true, summaryExtras);
-            minecraft.execute(() -> progressScreen.showSummary(summary.title, summary.lines));
-            sendPlayerMessages(minecraft, summary.lines);
+            minecraft.execute(() -> progressScreen.showSummary(summary.title, summary.summaryLines, summary.detailLines));
+            sendPlayerMessages(minecraft, summary.summaryLines);
             return;
         } finally {
             executor.shutdown();
@@ -224,14 +376,15 @@ public class ClientEventHandlers {
         }
 
         UpdateSummary summary = buildUpdateSummary(updateBaseUrl, modsOutcome, configOutcome, false, summaryExtras);
-        minecraft.execute(() -> progressScreen.showSummary(summary.title, summary.lines));
-        sendPlayerMessages(minecraft, summary.lines);
+        minecraft.execute(() -> progressScreen.showSummary(summary.title, summary.summaryLines, summary.detailLines));
+        sendPlayerMessages(minecraft, summary.summaryLines);
     }
 
     private static UpdateOutcome downloadConfigUpdate(
             String updateBaseUrl,
             Minecraft minecraft,
-            DownloadProgressScreen progressScreen
+            DownloadProgressScreen progressScreen,
+            ServerCachePaths cachePaths
     ) {
         String configUrl = buildDownloadUrl(updateBaseUrl, CONFIG_ZIP_NAME);
         if (configUrl == null) {
@@ -246,10 +399,11 @@ public class ClientEventHandlers {
                     progressScreen,
                     configUrl,
                     "config",
-                    CONFIG_DOWNLOAD_PATH,
+                    cachePaths.configDownloadPath(),
                     CONFIG_UNZIP_DESTINATION,
-                    CONFIG_CHECKSUM_FILE,
+                    cachePaths.configChecksumFile(),
                     false,
+                    Config.mirrorConfig,
                     null,
                     null
             );
@@ -298,6 +452,7 @@ public class ClientEventHandlers {
             Path unzipDestination,
             Path checksumFile,
             boolean syncModsById,
+            boolean mirrorMode,
             String currentModVersion,
             List<String> summaryExtras
     ) throws Exception {
@@ -327,8 +482,20 @@ public class ClientEventHandlers {
         } else {
             extractedFiles = extractZipFile(downloadPath, unzipDestination, progressScreen, displayName, "config/");
         }
+        Set<String> mirrorAllowed = extractedFiles == null ? new HashSet<>() : new HashSet<>(extractedFiles);
+        if (mirrorMode) {
+            if (syncModsById) {
+                mirrorAllowed.addAll(getSelfJarFileNames(unzipDestination, progressScreen));
+            }
+            MirrorResult mirrorResult = mirrorDirectoryContents(unzipDestination, mirrorAllowed, progressScreen, displayName);
+            if (summaryExtras != null && mirrorResult.removedFiles > 0) {
+                summaryExtras.add("Mirror removed " + mirrorResult.removedFiles + " extra file(s) from " + displayName + ".");
+            }
+        }
         Checksum.ChecksumDiff diff;
-        if (!syncModsById) {
+        if (mirrorMode) {
+            diff = computeAndSaveChecksums(unzipDestination, checksumFile, progressScreen, displayName, null, false);
+        } else if (!syncModsById) {
             diff = computeAndSaveChecksumsFromZip(
                     downloadPath,
                     checksumFile,
@@ -474,6 +641,7 @@ public class ClientEventHandlers {
         } else {
             result = Checksum.compareChecksums(targetDirectory, checksumFile, listener);
         }
+        Files.createDirectories(checksumFile.getParent());
         Checksum.saveChecksums(checksumFile, result.getNewChecksums());
         Checksum.ChecksumDiff diff = result.getDiff();
         if (filterFiles != null && !filterFiles.isEmpty()) {
@@ -482,6 +650,116 @@ public class ClientEventHandlers {
         return diff;
     }
 
+    private static final class MirrorResult {
+        private final int removedFiles;
+
+        private MirrorResult(int removedFiles, int removedDirs) {
+            this.removedFiles = removedFiles;
+        }
+    }
+
+    private static Set<String> getSelfJarFileNames(Path modsDirectory, DownloadProgressScreen progressScreen) {
+        Map<String, List<Path>> byId = indexInstalledModsById(modsDirectory, progressScreen);
+        List<Path> selfJars = byId.get(SCS.MODID.toLowerCase(Locale.ROOT));
+        if (selfJars == null || selfJars.isEmpty()) {
+            return Collections.emptySet();
+        }
+        Set<String> names = new HashSet<>();
+        for (Path jar : selfJars) {
+            names.add(jar.getFileName().toString());
+        }
+        return names;
+    }
+
+    private static MirrorResult mirrorDirectoryContents(
+            Path destination,
+            Set<String> allowedRelativePaths,
+            DownloadProgressScreen progressScreen,
+            String displayName
+    ) throws IOException {
+        if (!Files.exists(destination)) {
+            return new MirrorResult(0, 0);
+        }
+
+        Set<String> allowed = normalizeAllowedPaths(allowedRelativePaths);
+        List<Path> files;
+        try (var stream = Files.walk(destination)) {
+            files = stream.filter(Files::isRegularFile).collect(Collectors.toList());
+        }
+
+        int total = files.size();
+        int removedFiles = 0;
+        for (int i = 0; i < total; i++) {
+            Path file = files.get(i);
+            int current = i + 1;
+            if (current == 1 || current == total || current % 20 == 0) {
+                String rel = normalizeRelativeKey(destination, file);
+                int progress = total > 0 ? (int) ((current * 100L) / total) : 0;
+                updateProcessing(progressScreen, "Mirroring " + displayName + "...", String.format("%d/%d: %s", current, total, rel), progress, total > 0);
+            }
+
+            if (progressScreen.isCancelled()) {
+                break;
+            }
+
+            String rel = normalizeRelativeKey(destination, file);
+            if (!allowed.contains(rel)) {
+                try {
+                    Files.deleteIfExists(file);
+                    removedFiles++;
+                } catch (Exception e) {
+                    LOGGER.warn("Failed to remove extra {} file: {}", displayName, file, e);
+                }
+            }
+        }
+
+        int removedDirs = 0;
+        try (var stream = Files.walk(destination).sorted(Comparator.reverseOrder())) {
+            for (Path path : stream.toList()) {
+                if (path.equals(destination) || !Files.isDirectory(path)) {
+                    continue;
+                }
+                if (isDirectoryEmpty(path)) {
+                    Files.deleteIfExists(path);
+                    removedDirs++;
+                }
+            }
+        }
+
+        return new MirrorResult(removedFiles, removedDirs);
+    }
+
+    private static boolean isDirectoryEmpty(Path directory) throws IOException {
+        try (var stream = Files.list(directory)) {
+            return stream.findAny().isEmpty();
+        }
+    }
+
+    private static Set<String> normalizeAllowedPaths(Set<String> allowed) {
+        if (allowed == null || allowed.isEmpty()) {
+            return Collections.emptySet();
+        }
+        Set<String> normalized = new HashSet<>();
+        for (String entry : allowed) {
+            String key = normalizeRelativeKey(entry);
+            if (!key.isBlank()) {
+                normalized.add(key);
+            }
+        }
+        return normalized;
+    }
+
+    private static String normalizeRelativeKey(Path root, Path file) {
+        String rel = root.relativize(file).toString();
+        return normalizeRelativeKey(rel);
+    }
+
+    private static String normalizeRelativeKey(String rel) {
+        if (rel == null) {
+            return "";
+        }
+        return rel.replace('\\', '/').toLowerCase(Locale.ROOT);
+    }
     private static Set<String> extractZipFile(
             Path zipPath,
             Path destination,
@@ -532,11 +810,10 @@ public class ClientEventHandlers {
             List<String> summaryExtras
     ) throws Exception {
         Map<String, List<Path>> existingModsById = indexInstalledModsById(destination, progressScreen);
-        LOGGER.info("Indexed {} modIds in {}", existingModsById.size(), destination);
-
         Set<String> extractedFiles = new HashSet<>();
         List<String> modsToRemove = new ArrayList<>();
         boolean warnedSelfUpdate = false;
+
         try (ZipFile zipFile = new ZipFile(zipPath.toFile())) {
             List<? extends ZipEntry> entries = Collections.list(zipFile.entries());
             int total = entries.size();
@@ -545,10 +822,12 @@ public class ClientEventHandlers {
             for (ZipEntry entry : entries) {
                 current++;
                 String entryName = entry.getName();
+
                 if (MODS_REMOVE_LIST_NAME.equals(entryName)) {
                     modsToRemove = parseModsRemovalList(zipFile, entry);
                     continue;
                 }
+
                 Path entryPath = destination.resolve(entryName).normalize();
                 if (!entryPath.startsWith(destination)) {
                     throw new IOException("Blocked zip entry outside destination: " + entryName);
@@ -566,49 +845,32 @@ public class ClientEventHandlers {
                 }
 
                 Files.createDirectories(entryPath.getParent());
+                boolean isJar = entryName.toLowerCase(Locale.ROOT).endsWith(".jar");
 
-                boolean isJar = entryName.toLowerCase().endsWith(".jar");
                 if (isJar) {
                     byte[] jarBytes;
                     try (InputStream is = zipFile.getInputStream(entry)) {
                         jarBytes = is.readAllBytes();
                     }
 
+                    Set<String> modIds = Collections.emptySet();
+                    Map<String, String> modVersions = Collections.emptyMap();
                     try {
                         Toml toml = readTomlFromJarBytes(jarBytes);
-                        Set<String> modIds = extractModIdsFromToml(toml);
-                        Map<String, String> modVersions = extractModVersionsFromToml(toml);
-                        if (modIds.isEmpty()) {
-                            LOGGER.warn("Could not identify modId for {} - extracting without duplicate cleanup.", entryName);
-                        } else {
-                            LOGGER.info("Zip entry {} has modId(s): {}", entryName, String.join(", ", modIds));
-                            for (String modId : modIds) {
-                                if (modId == null || modId.isBlank()) {
-                                    continue;
-                                }
-                                // Remove any installed jar with the same modId (including jars extracted earlier in this run),
-                                // except the current target file name.
-                                List<Path> installed = existingModsById.getOrDefault(modId, Collections.emptyList());
-                                for (Path installedJar : installed) {
-                                    if (installedJar.equals(entryPath)) {
-                                        continue;
-                                    }
-                                    try {
-                                        if (Files.deleteIfExists(installedJar)) {
-                                            LOGGER.info("Removed old mod jar for modId {}: {}", modId, installedJar.getFileName());
-                                        }
-                                    } catch (Exception e) {
-                                        LOGGER.warn("Failed to remove old mod jar {} for modId {}", installedJar, modId, e);
-                                    }
-                                }
+                        modIds = extractModIdsFromToml(toml);
+                        modVersions = extractModVersionsFromToml(toml);
+                    } catch (Exception e) {
+                        LOGGER.warn("Failed to identify modId for {} - extracting without duplicate cleanup.", entryName, e);
+                    }
 
-                                // Track the jar we're about to write so later duplicates (if any) can replace it.
-                                existingModsById.put(modId, new ArrayList<>(List.of(entryPath)));
-                            }
-                        }
+                    if (!modIds.isEmpty()) {
+                        LOGGER.info("Zip entry {} has modId(s): {}", entryName, String.join(", ", modIds));
+                    }
 
+                    boolean isSelfJar = modIds.contains(SCS.MODID.toLowerCase(Locale.ROOT));
+                    if (isSelfJar) {
                         if (!warnedSelfUpdate && summaryExtras != null) {
-                            String zipVersion = modVersions.get(MMMMM.MODID);
+                            String zipVersion = modVersions.get(SCS.MODID.toLowerCase(Locale.ROOT));
                             if (zipVersion != null
                                     && currentModVersion != null
                                     && !currentModVersion.isBlank()
@@ -616,14 +878,36 @@ public class ClientEventHandlers {
                                     && !zipVersion.contains("${")) {
                                 int comparison = compareVersions(zipVersion, currentModVersion);
                                 if (comparison != 0) {
-                                    summaryExtras.add("Warning: mods.zip contains MMMMM " + zipVersion
-                                            + " (current: " + currentModVersion + "). It will overwrite on disk and apply after restart.");
+                                    summaryExtras.add("Warning: mods.zip contains SCS " + zipVersion
+                                            + " (current: " + currentModVersion + "). It will be ignored while running and should be updated with the game closed.");
                                     warnedSelfUpdate = true;
                                 }
                             }
                         }
-                    } catch (Exception e) {
-                        LOGGER.warn("Failed to identify modId for {} - extracting without duplicate cleanup.", entryName, e);
+                        LOGGER.info("Skipping SCS self-jar update while mod is running: {}", entryName);
+                        continue;
+                    }
+
+                    for (String modId : modIds) {
+                        if (modId == null || modId.isBlank()) {
+                            continue;
+                        }
+
+                        List<Path> installed = existingModsById.getOrDefault(modId, Collections.emptyList());
+                        for (Path installedJar : installed) {
+                            if (installedJar.equals(entryPath)) {
+                                continue;
+                            }
+                            try {
+                                if (Files.deleteIfExists(installedJar)) {
+                                    LOGGER.info("Removed old mod jar for modId {}: {}", modId, installedJar.getFileName());
+                                }
+                            } catch (Exception e) {
+                                LOGGER.warn("Failed to remove old mod jar {} for modId {}", installedJar, modId, e);
+                            }
+                        }
+
+                        existingModsById.put(modId, new ArrayList<>(List.of(entryPath)));
                     }
 
                     Files.write(entryPath, jarBytes, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
@@ -645,7 +929,7 @@ public class ClientEventHandlers {
                     summaryExtras.add("Mods removed by list: " + String.join(", ", removal.removed));
                 }
                 if (!removal.missing.isEmpty()) {
-                    summaryExtras.add("Mods not found for removal: " + String.join(", ", removal.missing));
+                    LOGGER.info("Mods requested for removal but not found: {}", String.join(", ", removal.missing));
                 }
                 if (!removal.invalid.isEmpty()) {
                     summaryExtras.add("Invalid entries in " + MODS_REMOVE_LIST_NAME + ": " + String.join(", ", removal.invalid));
@@ -655,7 +939,6 @@ public class ClientEventHandlers {
 
         return extractedFiles;
     }
-
     private static Map<String, List<Path>> indexInstalledModsById(
             Path modsDirectory,
             DownloadProgressScreen progressScreen
@@ -668,7 +951,7 @@ public class ClientEventHandlers {
         List<Path> jarPaths;
         try (var stream = Files.walk(modsDirectory)) {
             jarPaths = stream
-                    .filter(path -> Files.isRegularFile(path) && path.toString().toLowerCase().endsWith(".jar"))
+                    .filter(path -> Files.isRegularFile(path) && path.toString().toLowerCase(Locale.ROOT).endsWith(".jar"))
                     .collect(Collectors.toList());
         } catch (Exception e) {
             LOGGER.warn("Failed to index installed mods in {}", modsDirectory, e);
@@ -676,14 +959,17 @@ public class ClientEventHandlers {
         }
 
         int total = jarPaths.size();
-        int current = 0;
-        for (Path jarPath : jarPaths) {
-            current++;
-            int progress = total > 0 ? (int) ((current * 100L) / total) : 0;
-            String detail = total > 0
-                    ? String.format("%d/%d: %s", current, total, jarPath.getFileName())
-                    : jarPath.getFileName().toString();
-            updateProcessing(progressScreen, "Indexing installed mods...", detail, progress, total > 0);
+        for (int i = 0; i < total; i++) {
+            Path jarPath = jarPaths.get(i);
+            int current = i + 1;
+
+            if (current == 1 || current == total || current % 10 == 0) {
+                int progress = total > 0 ? (int) ((current * 100L) / total) : 0;
+                String detail = total > 0
+                        ? String.format("%d/%d: %s", current, total, jarPath.getFileName())
+                        : jarPath.getFileName().toString();
+                updateProcessing(progressScreen, "Indexing installed mods...", detail, progress, total > 0);
+            }
 
             try {
                 Set<String> modIds = getModIdsFromJarFile(jarPath);
@@ -700,7 +986,6 @@ public class ClientEventHandlers {
 
         return byId;
     }
-
     private static Set<String> getModIdsFromJarFile(Path jarPath) throws Exception {
         try (ZipFile zipFile = new ZipFile(jarPath.toFile())) {
             ZipEntry entry = zipFile.getEntry("META-INF/neoforge.mods.toml");
@@ -781,7 +1066,8 @@ public class ClientEventHandlers {
             boolean failedEarly,
             List<String> summaryExtras
     ) {
-        List<String> lines = new ArrayList<>();
+        List<String> summaryLines = new ArrayList<>();
+        List<String> detailLines = new ArrayList<>();
         boolean configAttempted = Config.updateConfig;
         boolean modsSuccess = modsOutcome != null && modsOutcome.isSuccess();
         boolean configSuccess = !configAttempted || (configOutcome != null && configOutcome.isSuccess());
@@ -791,37 +1077,56 @@ public class ClientEventHandlers {
         String title = failedEarly ? "Update failed" : "Update complete";
 
         if (modsSuccess) {
-            lines.add(buildUpdateMessage("Mods", modsOutcome.getDiff()));
+            summaryLines.add(buildSummaryLine("Mods", modsOutcome.getDiff()));
+            detailLines.add(buildDetailMessage("Mods", modsOutcome.getDiff()));
         } else {
-            lines.add("Mods update failed for " + updateBaseUrl + ". Check logs for details.");
+            summaryLines.add("Mods update failed for " + updateBaseUrl + ". Check logs for details.");
+            detailLines.add("Mods update failed for " + updateBaseUrl + ". Check logs for details.");
             title = "Update failed";
         }
 
         if (configAttempted) {
             if (configSuccess) {
-                lines.add(buildUpdateMessage("Config", configOutcome.getDiff()));
+                summaryLines.add(buildSummaryLine("Config", configOutcome.getDiff()));
+                detailLines.add(buildDetailMessage("Config", configOutcome.getDiff()));
             } else {
-                lines.add("Config update failed for " + updateBaseUrl + ". Check logs for details.");
+                summaryLines.add("Config update failed for " + updateBaseUrl + ". Check logs for details.");
+                detailLines.add("Config update failed for " + updateBaseUrl + ". Check logs for details.");
                 title = "Update failed";
             }
         } else {
-            lines.add("Config updates disabled.");
+            summaryLines.add("Config updates disabled.");
         }
 
         if (modsChanged) {
-            lines.add("Mods were updated. Please restart the game to apply them.");
+            summaryLines.add("Mods were updated. Please restart the game to apply them.");
         } else if (!modsChanged && !configChanged && !failedEarly && modsSuccess && configSuccess) {
-            lines.add("No updates found.");
+            summaryLines.add("No updates found.");
         }
 
         if (summaryExtras != null && !summaryExtras.isEmpty()) {
-            lines.addAll(summaryExtras);
+            summaryLines.add("Warnings: " + summaryExtras.size() + " (see details)");
+            detailLines.addAll(summaryExtras);
         }
 
-        return new UpdateSummary(title, lines);
+        return new UpdateSummary(title, summaryLines, detailLines);
     }
 
-    private static String buildUpdateMessage(String label, Checksum.ChecksumDiff diff) {
+    private static String buildSummaryLine(String label, Checksum.ChecksumDiff diff) {
+        if (diff == null || diff.isEmpty()) {
+            return label + ": no changes.";
+        }
+
+        return label + " updated: +"
+                + diff.getAdded().size()
+                + " ~"
+                + diff.getModified().size()
+                + " -"
+                + diff.getRemoved().size()
+                + ".";
+    }
+
+    private static String buildDetailMessage(String label, Checksum.ChecksumDiff diff) {
         if (diff == null || diff.isEmpty()) {
             return label + ": no changes.";
         }
@@ -945,43 +1250,53 @@ public class ClientEventHandlers {
             return new RemovalResult(List.of(), List.of(), invalid);
         }
 
-        List<String> removed = new ArrayList<>();
-        List<String> missing;
-        Set<String> removedLower = new HashSet<>();
-
-        int current = 0;
+        List<Path> files;
         try (var stream = Files.walk(modsDirectory)) {
-            var iterator = stream.filter(Files::isRegularFile).iterator();
-            while (iterator.hasNext()) {
-                Path path = iterator.next();
-                current++;
-                String fileName = path.getFileName().toString();
-                updateProcessing(progressScreen, "Removing mods...", "Checked " + current + ": " + fileName, 0, false);
-
-                String key = fileName.toLowerCase(Locale.ROOT);
-                if (requested.containsKey(key)) {
-                    try {
-                        if (Files.deleteIfExists(path)) {
-                            removed.add(fileName);
-                            removedLower.add(key);
-                        }
-                    } catch (Exception e) {
-                        LOGGER.warn("Failed to remove mod {}", fileName, e);
-                    }
-                }
-            }
+            files = stream.filter(Files::isRegularFile).collect(Collectors.toList());
         } catch (Exception e) {
-            LOGGER.warn("Failed to remove mods listed in {}", MODS_REMOVE_LIST_NAME, e);
+            LOGGER.warn("Failed to list files for removal in {}", modsDirectory, e);
+            files = List.of();
         }
 
-        missing = requested.entrySet().stream()
+        List<String> removed = new ArrayList<>();
+        Set<String> removedLower = new HashSet<>();
+        int total = files.size();
+
+        for (int i = 0; i < total; i++) {
+            Path path = files.get(i);
+            String fileName = path.getFileName().toString();
+            int current = i + 1;
+
+            if (current == 1 || current == total || current % 10 == 0) {
+                int progress = total > 0 ? (int) ((current * 100L) / total) : 0;
+                String detail = total > 0
+                        ? String.format("%d/%d: %s", current, total, fileName)
+                        : fileName;
+                updateProcessing(progressScreen, "Removing mods...", detail, progress, total > 0);
+            }
+
+            String key = fileName.toLowerCase(Locale.ROOT);
+            if (!requested.containsKey(key)) {
+                continue;
+            }
+
+            try {
+                if (Files.deleteIfExists(path)) {
+                    removed.add(fileName);
+                    removedLower.add(key);
+                }
+            } catch (Exception e) {
+                LOGGER.warn("Failed to remove mod {}", fileName, e);
+            }
+        }
+
+        List<String> missing = requested.entrySet().stream()
                 .filter(entry -> !removedLower.contains(entry.getKey()))
                 .map(Map.Entry::getValue)
                 .collect(Collectors.toList());
 
         return new RemovalResult(removed, missing, invalid);
     }
-
     private static String normalizeFileName(String name) {
         if (name == null) {
             return "";
@@ -996,7 +1311,7 @@ public class ClientEventHandlers {
 
     private static String getCurrentModVersion() {
         return ModList.get()
-                .getModContainerById(MMMMM.MODID)
+                .getModContainerById(SCS.MODID)
                 .map(container -> container.getModInfo().getVersion().toString())
                 .orElse("unknown");
     }
@@ -1103,6 +1418,7 @@ public class ClientEventHandlers {
         }
 
         Checksum.ChecksumResult result = Checksum.compareChecksums(checksumFile, newChecksums);
+        Files.createDirectories(checksumFile.getParent());
         Checksum.saveChecksums(checksumFile, result.getNewChecksums());
         return result.getDiff();
     }

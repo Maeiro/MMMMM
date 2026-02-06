@@ -145,9 +145,9 @@ tasks.named('shadowJar', com.github.jengelman.gradle.plugins.shadow.tasks.Shadow
     }
 
     // Relocate the selected deps
-    relocate 'com.moandjiezana.toml', 'com.mmmmm.shaded.toml'
-    relocate 'com.moandjiezana.github.oshi', 'com.mmmmm.github.oshi'
-    relocate 'org.json', 'com.mmmmm.shaded.json'
+    relocate 'com.moandjiezana.toml', 'com.scs.shaded.toml'
+    relocate 'com.moandjiezana.github.oshi', 'com.scs.github.oshi'
+    relocate 'org.json', 'com.scs.shaded.json'
 
     // Do NOT pull Minecraft/NeoForge/LWJGL/etc into the shaded jar
     exclude 'net/minecraft/**'
@@ -159,7 +159,7 @@ tasks.named('shadowJar', com.github.jengelman.gradle.plugins.shadow.tasks.Shadow
     exclude 'test/**', '**/Test*.class', '**/*Test.class'
 
     // Keep your own classes in the final jar; jar plugin will merge them
-    // so we do not exclude 'com/mmmmm/**' here.
+    // so we do not exclude 'com/scs/**' here.
 }
 
 // Make the build task use shadowJar

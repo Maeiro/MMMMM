@@ -1,4 +1,4 @@
-package com.mmmmm.mixin;
+package com.scs.mixin;
 
 import net.minecraft.client.gui.components.Renderable;
 import net.minecraft.client.gui.components.events.GuiEventListener;

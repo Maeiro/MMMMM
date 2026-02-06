@@ -1,7 +1,7 @@
-package com.mmmmm.server;
+package com.scs.server;
 
-import com.mmmmm.core.Config;
-import com.mmmmm.core.MMMMM;
+import com.scs.core.Config;
+import com.scs.core.SCS;
 import com.sun.net.httpserver.HttpServer;
 import java.io.IOException;
 import java.net.InetSocketAddress;
@@ -15,16 +15,18 @@ import java.util.concurrent.Executors;
  */
 public class FileHostingServer {
 
-    private static HttpServer fileHostingServer;
-    private static ExecutorService fileExecutor;
-    private static volatile int activePort = -1;
-    public static final Path FILE_DIRECTORY = Path.of("MMMMM/shared-files");
+    private static HttpServer httpServer;
+    private static ExecutorService executor;
+    private static volatile int currentPort = -1;
+    public static final Path FILE_DIRECTORY = Path.of("SCS/shared-files");
+    private static final String ZIP_CONTENT_TYPE = "application/zip";
+    private static final String DEFAULT_CONTENT_TYPE = "application/octet-stream";
 
     /**
      * Starts the file hosting server on a separate thread.
      */
     public static void start() throws IOException {
-        if (fileHostingServer != null) {
+        if (httpServer != null) {
             return;
         }
 
@@ -35,29 +37,29 @@ public class FileHostingServer {
         }
 
         // Create and configure the HTTP server
-        fileHostingServer = HttpServer.create(new InetSocketAddress(port), 0);
-        activePort = port;
+        httpServer = HttpServer.create(new InetSocketAddress(port), 0);
+        currentPort = port;
 
-        fileHostingServer.createContext("/", exchange -> {
+        httpServer.createContext("/", exchange -> {
             try {
                 String requestPath = exchange.getRequestURI().getPath();
-                MMMMM.LOGGER.info("Received request: " + requestPath);
+                SCS.LOGGER.info("Received request: " + requestPath);
 
                 Path filePath = FILE_DIRECTORY.resolve(requestPath.substring(1)).normalize();
 
                 if (!filePath.startsWith(FILE_DIRECTORY)) {
-                    MMMMM.LOGGER.warn("Unauthorized access attempt: " + filePath);
+                    SCS.LOGGER.warn("Unauthorized access attempt: " + filePath);
                     exchange.sendResponseHeaders(403, -1);
                     return;
                 }
 
                 if (!Files.exists(filePath) || Files.isDirectory(filePath)) {
-                    MMMMM.LOGGER.warn("File not found: " + filePath);
+                    SCS.LOGGER.warn("File not found: " + filePath);
                     exchange.sendResponseHeaders(404, -1);
                     return;
                 }
 
-                String contentType = requestPath.endsWith(".zip") ? "application/zip" : "application/octet-stream";
+                String contentType = requestPath.endsWith(".zip") ? ZIP_CONTENT_TYPE : DEFAULT_CONTENT_TYPE;
                 exchange.getResponseHeaders().add("Content-Type", contentType);
 
                 long fileSize = Files.size(filePath);
@@ -68,26 +70,26 @@ public class FileHostingServer {
                     is.transferTo(os);
                 }
 
-                MMMMM.LOGGER.info("Successfully served file: " + filePath);
+                SCS.LOGGER.info("Successfully served file: " + filePath);
 
             } catch (Exception e) {
-                MMMMM.LOGGER.error("Error processing request", e);
+                SCS.LOGGER.error("Error processing request", e);
                 try {
                     exchange.sendResponseHeaders(500, -1); // Internal Server Error
                 } catch (IOException ioException) {
-                    MMMMM.LOGGER.error("Failed to send error response", ioException);
+                    SCS.LOGGER.error("Failed to send error response", ioException);
                 }
             } finally {
                 exchange.close();
             }
         });
 
-        fileExecutor = Executors.newCachedThreadPool(); // Enable concurrent downloads
-        fileHostingServer.setExecutor(fileExecutor);
+        executor = Executors.newCachedThreadPool(); // Enable concurrent downloads
+        httpServer.setExecutor(executor);
         // Start the server on a separate thread
         new Thread(() -> {
-            fileHostingServer.start();
-            MMMMM.LOGGER.info("File hosting server started on port " + activePort);
+            httpServer.start();
+            SCS.LOGGER.info("File hosting server started on port " + currentPort);
         }).start();
     }
 
@@ -95,27 +97,27 @@ public class FileHostingServer {
      * Stops the file hosting server.
      */
     public static void stop() {
-        if (fileHostingServer != null) {
-            fileHostingServer.stop(0);
-            MMMMM.LOGGER.info("File hosting server stopped.");
-            fileHostingServer = null;
-            activePort = -1;
+        if (httpServer != null) {
+            httpServer.stop(0);
+            SCS.LOGGER.info("File hosting server stopped.");
+            httpServer = null;
+            currentPort = -1;
         }
-        if (fileExecutor != null) {
-            fileExecutor.shutdown();
-            fileExecutor = null;
+        if (executor != null) {
+            executor.shutdown();
+            executor = null;
         }
     }
 
     public static synchronized void restartIfPortChanged() throws IOException {
         int desiredPort = Config.fileServerPort;
-        if (fileHostingServer == null) {
+        if (httpServer == null) {
             start();
             return;
         }
 
-        if (desiredPort != activePort) {
-            MMMMM.LOGGER.info("File server port changed ({} -> {}). Restarting.", activePort, desiredPort);
+        if (desiredPort != currentPort) {
+            SCS.LOGGER.info("File server port changed ({} -> {}). Restarting.", currentPort, desiredPort);
             stop();
             start();
         }
