@@ -51,7 +51,7 @@ public abstract class EditServerScreenMixin {
                 mc.getWindow().getGuiScaledWidth() / 2 - 100,
                 mc.getWindow().getGuiScaledHeight() / 4 + 60,
                 200, 20,
-                Component.literal("Custom Field")
+                Component.translatable("screen.scs.download_url")
         );
         customField.setMaxLength(100);
 
@@ -81,12 +81,12 @@ public abstract class EditServerScreenMixin {
     private void onRender(GuiGraphics graphics, int mouseX, int mouseY, float delta, CallbackInfo ci) {
         int x = Minecraft.getInstance().getWindow().getGuiScaledWidth() / 2 - 100;
         if (labelYPositions[0] != 0) {
-            graphics.drawString(Minecraft.getInstance().font, Component.literal("Server Name"), x, labelYPositions[0], 0xA0A0A0);
+            graphics.drawString(Minecraft.getInstance().font, Component.translatable("screen.scs.server_name"), x, labelYPositions[0], 0xA0A0A0);
         }
         if (labelYPositions[1] != 0) {
-            graphics.drawString(Minecraft.getInstance().font, Component.literal("Server Address"), x, labelYPositions[1], 0xA0A0A0);
+            graphics.drawString(Minecraft.getInstance().font, Component.translatable("screen.scs.server_address"), x, labelYPositions[1], 0xA0A0A0);
         }
-        graphics.drawString(Minecraft.getInstance().font, Component.literal("Download URL"), x, Minecraft.getInstance().getWindow().getGuiScaledHeight() / 4 + 50, 0xA0A0A0);
+        graphics.drawString(Minecraft.getInstance().font, Component.translatable("screen.scs.download_url"), x, Minecraft.getInstance().getWindow().getGuiScaledHeight() / 4 + 50, 0xA0A0A0);
     }
 
     // Redirect original label draw call for "Server Name"

@@ -19,7 +19,7 @@ public final class UpdateActionScreen extends Screen {
     private final String updateBaseUrl;
 
     public UpdateActionScreen(Screen returnScreen, String serverAddress, String updateBaseUrl) {
-        super(Component.literal("Update options"));
+        super(Component.translatable("screen.scs.update_options.title"));
         this.returnScreen = returnScreen;
         this.serverAddress = serverAddress == null ? "" : serverAddress;
         this.updateBaseUrl = updateBaseUrl;
@@ -34,17 +34,17 @@ public final class UpdateActionScreen extends Screen {
         int centerY = this.height / 2;
 
         this.addRenderableWidget(Button.builder(
-                Component.literal("Yes"),
+                Component.translatable("gui.scs.yes"),
                 button -> UpdateCoordinator.startUpdate(updateBaseUrl, returnScreen, serverAddress)
         ).bounds(leftX, centerY, BUTTON_WIDTH, BUTTON_HEIGHT).build());
 
         this.addRenderableWidget(Button.builder(
-                Component.literal("No"),
+                Component.translatable("gui.scs.no"),
                 button -> this.minecraft.setScreen(returnScreen)
         ).bounds(leftX + BUTTON_WIDTH + BUTTON_GAP, centerY, BUTTON_WIDTH, BUTTON_HEIGHT).build());
 
         this.addRenderableWidget(Button.builder(
-                Component.literal("Clear cache"),
+                Component.translatable("gui.scs.clear_cache"),
                 button -> {
                     Minecraft minecraft = Minecraft.getInstance();
                     ConfirmScreen confirmScreen = new ConfirmScreen(
@@ -55,10 +55,10 @@ public final class UpdateActionScreen extends Screen {
                                     minecraft.setScreen(this);
                                 }
                             },
-                            Component.literal("Clear SCS cache?"),
-                            Component.literal("This will delete shared-files and checksum cache files."),
-                            Component.literal("Clear"),
-                            Component.literal("Back")
+                            Component.translatable("screen.scs.clear_cache.title"),
+                            Component.translatable("screen.scs.clear_cache.body"),
+                            Component.translatable("gui.scs.clear"),
+                            Component.translatable("gui.scs.back")
                     );
                     minecraft.setScreen(confirmScreen);
                 }
@@ -77,8 +77,8 @@ public final class UpdateActionScreen extends Screen {
         this.renderBackground(guiGraphics, mouseX, mouseY, partialTicks);
         super.render(guiGraphics, mouseX, mouseY, partialTicks);
 
-        guiGraphics.drawCenteredString(this.font, "Update this server?", this.width / 2, (this.height / 2) - 40, 0xFFFFFF);
-        String serverLabel = serverAddress.isBlank() ? "Server: unknown" : "Server: " + serverAddress;
-        guiGraphics.drawCenteredString(this.font, serverLabel, this.width / 2, (this.height / 2) - 26, 0xA0A0A0);
+        guiGraphics.drawCenteredString(this.font, Component.translatable("screen.scs.update_this_server"), this.width / 2, (this.height / 2) - 40, 0xFFFFFF);
+        String serverLabel = serverAddress.isBlank() ? "" : serverAddress;
+        guiGraphics.drawCenteredString(this.font, Component.translatable("screen.scs.server_label", serverLabel), this.width / 2, (this.height / 2) - 26, 0xA0A0A0);
     }
 }

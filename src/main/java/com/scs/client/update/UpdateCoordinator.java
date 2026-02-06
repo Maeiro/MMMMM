@@ -57,6 +57,10 @@ public final class UpdateCoordinator {
     private UpdateCoordinator() {
     }
 
+    private static String tr(String key, Object... args) {
+        return Component.translatable(key, args).getString();
+    }
+
     private static final class UpdateSummary {
         private final String title;
         private final List<String> summaryLines;
@@ -128,7 +132,7 @@ public final class UpdateCoordinator {
             return;
         }
 
-        DownloadProgressScreen progressScreen = new DownloadProgressScreen("mods", modsUrl, returnScreen);
+        DownloadProgressScreen progressScreen = new DownloadProgressScreen(tr("screen.scs.label.mods"), modsUrl, returnScreen);
         minecraft.setScreen(progressScreen);
 
         ExecutorService executor = Executors.newSingleThreadExecutor();
@@ -142,29 +146,29 @@ public final class UpdateCoordinator {
     public static void clearCache(Screen returnScreen, String serverKey) {
         Minecraft minecraft = Minecraft.getInstance();
         ServerCachePaths cachePaths = buildServerCachePaths(resolveServerKey(serverKey, null));
-        DownloadProgressScreen progressScreen = new DownloadProgressScreen("cache", "local", returnScreen);
+        DownloadProgressScreen progressScreen = new DownloadProgressScreen(tr("screen.scs.label.cache"), tr("screen.scs.source.local"), returnScreen);
         minecraft.setScreen(progressScreen);
 
         ExecutorService executor = Executors.newSingleThreadExecutor();
         executor.execute(() -> {
             try {
-                minecraft.execute(() -> progressScreen.startProcessing("Clearing cache...", "Removing shared-files and checksums for " + cachePaths.serverKey() + "..."));
+                minecraft.execute(() -> progressScreen.startProcessing(tr("screen.scs.cache_clearing"), tr("screen.scs.cache_clearing_detail", cachePaths.serverKey())));
                 ClearCacheResult result = clearCacheInternal(cachePaths);
                 if (serverKey != null && !serverKey.isBlank()) {
                     ServerMetadata.removeMetadata(serverKey);
                 }
                 List<String> summary = List.of(
-                        "Cache cleared successfully.",
-                        "Server cache: " + cachePaths.serverKey(),
-                        "Deleted files: " + result.deletedFiles,
-                        "Deleted directories: " + result.deletedDirs
+                        tr("screen.scs.cache_cleared_success"),
+                        tr("screen.scs.cache_server_label", cachePaths.serverKey()),
+                        tr("screen.scs.cache_deleted_files", result.deletedFiles),
+                        tr("screen.scs.cache_deleted_dirs", result.deletedDirs)
                 );
-                minecraft.execute(() -> progressScreen.showSummary("Cache cleared", summary));
+                minecraft.execute(() -> progressScreen.showSummary(tr("screen.scs.cache_cleared_title"), summary));
             } catch (Exception e) {
                 LOGGER.error("Failed to clear cache", e);
                 minecraft.execute(() -> progressScreen.showSummary(
-                        "Cache clear failed",
-                        List.of("Failed to clear cache. Check logs for details.")
+                        tr("screen.scs.cache_clear_failed_title"),
+                        List.of(tr("screen.scs.cache_clear_failed_body"))
                 ));
             } finally {
                 executor.shutdown();
@@ -174,16 +178,16 @@ public final class UpdateCoordinator {
 
     private static void showMissingUpdateUrlMessage(Minecraft minecraft, Screen returnScreen, String updateBaseUrl, String serverKey) {
         String metadataValue = (updateBaseUrl == null || updateBaseUrl.isBlank()) ? "<empty>" : updateBaseUrl;
-        DownloadProgressScreen progressScreen = new DownloadProgressScreen("mods", "server", returnScreen);
+        DownloadProgressScreen progressScreen = new DownloadProgressScreen(tr("screen.scs.label.mods"), tr("screen.scs.source.server"), returnScreen);
         minecraft.setScreen(progressScreen);
         progressScreen.showSummary(
-                "Update unavailable",
+                tr("screen.scs.update_unavailable"),
                 List.of(
-                        "No update URL configured for this server.",
-                        "Open server settings and configure an update URL.",
-                        "Server cache id: " + serverKey
+                        tr("screen.scs.update_no_url"),
+                        tr("screen.scs.update_open_settings"),
+                        tr("screen.scs.update_server_cache_id", serverKey)
                 ),
-                List.of("Metadata value: " + metadataValue)
+                List.of(tr("screen.scs.update_metadata_value", metadataValue))
         );
     }
 
@@ -374,8 +378,8 @@ public final class UpdateCoordinator {
         }
 
         if (cancelled) {
-            minecraft.execute(() -> progressScreen.showSummary("Update cancelled", List.of("Update cancelled by user.")));
-            sendPlayerMessages(minecraft, List.of("Update cancelled by user."));
+            minecraft.execute(() -> progressScreen.showSummary(tr("screen.scs.update_cancelled"), List.of(tr("screen.scs.update_cancelled_by_user"))));
+            sendPlayerMessages(minecraft, List.of(tr("screen.scs.update_cancelled_by_user")));
             return;
         }
 
@@ -882,8 +886,7 @@ public final class UpdateCoordinator {
                                     && !zipVersion.contains("${")) {
                                 int comparison = compareVersions(zipVersion, currentModVersion);
                                 if (comparison != 0) {
-                                    summaryExtras.add("Warning: mods.zip contains SCS " + zipVersion
-                                            + " (current: " + currentModVersion + "). It will be ignored while running and should be updated with the game closed.");
+                                    summaryExtras.add(tr("screen.scs.warn_self_update", zipVersion, currentModVersion));
                                     warnedSelfUpdate = true;
                                 }
                             }
@@ -1078,38 +1081,40 @@ public final class UpdateCoordinator {
         boolean modsChanged = modsOutcome != null && modsOutcome.hasChanges();
         boolean configChanged = configAttempted && configOutcome != null && configOutcome.hasChanges();
 
-        String title = failedEarly ? "Update failed" : "Update complete";
+        String modsLabel = tr("screen.scs.label.mods");
+        String configLabel = tr("screen.scs.label.config");
+        String title = failedEarly ? tr("screen.scs.update_failed") : tr("screen.scs.update_complete");
 
         if (modsSuccess) {
-            summaryLines.add(buildSummaryLine("Mods", modsOutcome.getDiff()));
-            detailLines.add(buildDetailMessage("Mods", modsOutcome.getDiff()));
+            summaryLines.add(buildSummaryLine(modsLabel, modsOutcome.getDiff()));
+            detailLines.add(buildDetailMessage(modsLabel, modsOutcome.getDiff()));
         } else {
-            summaryLines.add("Mods update failed for " + updateBaseUrl + ". Check logs for details.");
-            detailLines.add("Mods update failed for " + updateBaseUrl + ". Check logs for details.");
-            title = "Update failed";
+            summaryLines.add(tr("screen.scs.mods_update_failed", updateBaseUrl));
+            detailLines.add(tr("screen.scs.mods_update_failed", updateBaseUrl));
+            title = tr("screen.scs.update_failed");
         }
 
         if (configAttempted) {
             if (configSuccess) {
-                summaryLines.add(buildSummaryLine("Config", configOutcome.getDiff()));
-                detailLines.add(buildDetailMessage("Config", configOutcome.getDiff()));
+                summaryLines.add(buildSummaryLine(configLabel, configOutcome.getDiff()));
+                detailLines.add(buildDetailMessage(configLabel, configOutcome.getDiff()));
             } else {
-                summaryLines.add("Config update failed for " + updateBaseUrl + ". Check logs for details.");
-                detailLines.add("Config update failed for " + updateBaseUrl + ". Check logs for details.");
-                title = "Update failed";
+                summaryLines.add(tr("screen.scs.config_update_failed", updateBaseUrl));
+                detailLines.add(tr("screen.scs.config_update_failed", updateBaseUrl));
+                title = tr("screen.scs.update_failed");
             }
         } else {
-            summaryLines.add("Config updates disabled.");
+            summaryLines.add(tr("screen.scs.config_updates_disabled"));
         }
 
         if (modsChanged) {
-            summaryLines.add("Mods were updated. Please restart the game to apply them.");
+            summaryLines.add(tr("screen.scs.mods_restart_required"));
         } else if (!modsChanged && !configChanged && !failedEarly && modsSuccess && configSuccess) {
-            summaryLines.add("No updates found.");
+            summaryLines.add(tr("screen.scs.no_updates_found"));
         }
 
         if (summaryExtras != null && !summaryExtras.isEmpty()) {
-            summaryLines.add("Warnings: " + summaryExtras.size() + " (see details)");
+            summaryLines.add(tr("screen.scs.warnings_count", summaryExtras.size()));
             detailLines.addAll(summaryExtras);
         }
 
@@ -1118,27 +1123,18 @@ public final class UpdateCoordinator {
 
     private static String buildSummaryLine(String label, Checksum.ChecksumDiff diff) {
         if (diff == null || diff.isEmpty()) {
-            return label + ": no changes.";
+            return tr("screen.scs.summary_no_changes", label);
         }
 
-        return label + " updated: +"
-                + diff.getAdded().size()
-                + " ~"
-                + diff.getModified().size()
-                + " -"
-                + diff.getRemoved().size()
-                + ".";
+        return tr("screen.scs.summary_updated_short", label, diff.getAdded().size(), diff.getModified().size(), diff.getRemoved().size());
     }
 
     private static String buildDetailMessage(String label, Checksum.ChecksumDiff diff) {
         if (diff == null || diff.isEmpty()) {
-            return label + ": no changes.";
+            return tr("screen.scs.summary_no_changes", label);
         }
 
-        String summary = label + " updated (added " + diff.getAdded().size()
-                + ", modified " + diff.getModified().size()
-                + ", removed " + diff.getRemoved().size()
-                + ").";
+        String summary = tr("screen.scs.summary_updated_long", label, diff.getAdded().size(), diff.getModified().size(), diff.getRemoved().size());
 
         String details = buildChangeDetails(diff);
         return details.isEmpty() ? summary : summary + " " + details;
@@ -1147,17 +1143,17 @@ public final class UpdateCoordinator {
     private static String buildChangeDetails(Checksum.ChecksumDiff diff) {
         List<String> sections = new ArrayList<>();
 
-        String added = formatChangeSection("Added", diff.getAdded());
+        String added = formatChangeSection(tr("screen.scs.summary_section_added"), diff.getAdded());
         if (!added.isEmpty()) {
             sections.add(added);
         }
 
-        String modified = formatChangeSection("Modified", diff.getModified());
+        String modified = formatChangeSection(tr("screen.scs.summary_section_modified"), diff.getModified());
         if (!modified.isEmpty()) {
             sections.add(modified);
         }
 
-        String removed = formatChangeSection("Removed", diff.getRemoved());
+        String removed = formatChangeSection(tr("screen.scs.summary_section_removed"), diff.getRemoved());
         if (!removed.isEmpty()) {
             sections.add(removed);
         }
@@ -1172,10 +1168,10 @@ public final class UpdateCoordinator {
 
         int showCount = Math.min(items.size(), MAX_CHANGE_LIST_ITEMS);
         List<String> shown = items.subList(0, showCount);
-        String text = label + ": " + String.join(", ", shown);
+        String text = tr("screen.scs.summary_section_format", label, String.join(", ", shown));
 
         if (items.size() > showCount) {
-            text += " (+" + (items.size() - showCount) + " more)";
+            text += " " + tr("screen.scs.summary_more", (items.size() - showCount));
         }
 
         return text;
@@ -1447,3 +1443,11 @@ public final class UpdateCoordinator {
         return normalized.trim();
     }
 }
+
+
+
+
+
+
+
+

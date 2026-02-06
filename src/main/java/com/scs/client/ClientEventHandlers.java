@@ -62,7 +62,7 @@ public final class ClientEventHandlers {
 
     private static Button createUpdateButton(int x, int y, ServerData server, JoinMultiplayerScreen returnScreen) {
         return Button.builder(
-                Component.literal("Update"),
+                Component.translatable("gui.scs.update"),
                 button -> {
                     String updateBaseUrl = ServerMetadata.getMetadata(server.ip);
                     LOGGER.info("Update button clicked for server: {}", updateBaseUrl);
