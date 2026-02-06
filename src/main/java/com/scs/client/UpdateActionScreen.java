@@ -35,7 +35,7 @@ public final class UpdateActionScreen extends Screen {
 
         this.addRenderableWidget(Button.builder(
                 Component.literal("Yes"),
-                button -> UpdateCoordinator.startUpdate(updateBaseUrl, returnScreen)
+                button -> UpdateCoordinator.startUpdate(updateBaseUrl, returnScreen, serverAddress)
         ).bounds(leftX, centerY, BUTTON_WIDTH, BUTTON_HEIGHT).build());
 
         this.addRenderableWidget(Button.builder(
@@ -50,7 +50,7 @@ public final class UpdateActionScreen extends Screen {
                     ConfirmScreen confirmScreen = new ConfirmScreen(
                             confirmed -> {
                                 if (confirmed) {
-                                    UpdateCoordinator.clearCache(returnScreen);
+                                    UpdateCoordinator.clearCache(returnScreen, serverAddress);
                                 } else {
                                     minecraft.setScreen(this);
                                 }

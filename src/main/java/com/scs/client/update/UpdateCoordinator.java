@@ -47,12 +47,9 @@ public final class UpdateCoordinator {
     private static final String MOD_ZIP_NAME = "mods.zip";
     private static final String CONFIG_ZIP_NAME = "config.zip";
     private static final String MODS_REMOVE_LIST_NAME = "modsToRemoveFromTheClient.json";
-    private static final Path MOD_DOWNLOAD_PATH = Path.of("SCS/shared-files", MOD_ZIP_NAME);
+    private static final Path SERVER_CACHE_ROOT = Path.of("SCS/servers");
     private static final Path MOD_UNZIP_DESTINATION = Path.of("mods");
-    private static final Path MOD_CHECKSUM_FILE = Path.of("SCS/mods_checksums.json");
-    private static final Path CONFIG_DOWNLOAD_PATH = Path.of("SCS/shared-files", CONFIG_ZIP_NAME);
     private static final Path CONFIG_UNZIP_DESTINATION = Path.of("config");
-    private static final Path CONFIG_CHECKSUM_FILE = Path.of("SCS/config_checksums.json");
     private static final Logger LOGGER = LoggerFactory.getLogger(UpdateCoordinator.class);
     private static final int MAX_CHANGE_LIST_ITEMS = 5;
 
@@ -111,17 +108,22 @@ public final class UpdateCoordinator {
         }
     }
     public static void startUpdate(String updateBaseUrl) {
-        startUpdate(updateBaseUrl, null);
+        startUpdate(updateBaseUrl, null, null);
     }
 
     public static void startUpdate(String updateBaseUrl, Screen returnScreenOverride) {
+        startUpdate(updateBaseUrl, returnScreenOverride, null);
+    }
+
+    public static void startUpdate(String updateBaseUrl, Screen returnScreenOverride, String serverKey) {
         Minecraft minecraft = Minecraft.getInstance();
         Screen returnScreen = returnScreenOverride != null ? returnScreenOverride : minecraft.screen;
+        ServerCachePaths cachePaths = buildServerCachePaths(resolveServerKey(serverKey, updateBaseUrl));
 
         String modsUrl = buildDownloadUrl(updateBaseUrl, MOD_ZIP_NAME);
         if (modsUrl == null) {
             LOGGER.info("No mod URL found for {}", updateBaseUrl);
-            showMissingUpdateUrlMessage(minecraft, returnScreen, updateBaseUrl);
+            showMissingUpdateUrlMessage(minecraft, returnScreen, updateBaseUrl, cachePaths.serverKey());
             return;
         }
 
@@ -129,21 +131,27 @@ public final class UpdateCoordinator {
         minecraft.setScreen(progressScreen);
 
         ExecutorService executor = Executors.newSingleThreadExecutor();
-        executor.execute(() -> performUpdateFlow(updateBaseUrl, modsUrl, minecraft, progressScreen, executor));
+        executor.execute(() -> performUpdateFlow(updateBaseUrl, modsUrl, minecraft, progressScreen, executor, cachePaths));
     }
 
     public static void clearCache(Screen returnScreen) {
+        clearCache(returnScreen, null);
+    }
+
+    public static void clearCache(Screen returnScreen, String serverKey) {
         Minecraft minecraft = Minecraft.getInstance();
+        ServerCachePaths cachePaths = buildServerCachePaths(resolveServerKey(serverKey, null));
         DownloadProgressScreen progressScreen = new DownloadProgressScreen("cache", "local", returnScreen);
         minecraft.setScreen(progressScreen);
 
         ExecutorService executor = Executors.newSingleThreadExecutor();
         executor.execute(() -> {
             try {
-                minecraft.execute(() -> progressScreen.startProcessing("Clearing cache...", "Removing shared-files and checksums..."));
-                ClearCacheResult result = clearCacheInternal();
+                minecraft.execute(() -> progressScreen.startProcessing("Clearing cache...", "Removing shared-files and checksums for " + cachePaths.serverKey() + "..."));
+                ClearCacheResult result = clearCacheInternal(cachePaths);
                 List<String> summary = List.of(
                         "Cache cleared successfully.",
+                        "Server cache: " + cachePaths.serverKey(),
                         "Deleted files: " + result.deletedFiles,
                         "Deleted directories: " + result.deletedDirs
                 );
@@ -160,7 +168,7 @@ public final class UpdateCoordinator {
         });
     }
 
-    private static void showMissingUpdateUrlMessage(Minecraft minecraft, Screen returnScreen, String updateBaseUrl) {
+    private static void showMissingUpdateUrlMessage(Minecraft minecraft, Screen returnScreen, String updateBaseUrl, String serverKey) {
         String metadataValue = (updateBaseUrl == null || updateBaseUrl.isBlank()) ? "<empty>" : updateBaseUrl;
         DownloadProgressScreen progressScreen = new DownloadProgressScreen("mods", "server", returnScreen);
         minecraft.setScreen(progressScreen);
@@ -168,26 +176,26 @@ public final class UpdateCoordinator {
                 "Update unavailable",
                 List.of(
                         "No update URL configured for this server.",
-                        "Open server settings and configure an update URL."
+                        "Open server settings and configure an update URL.",
+                        "Server cache id: " + serverKey
                 ),
                 List.of("Metadata value: " + metadataValue)
         );
     }
 
-    private static ClearCacheResult clearCacheInternal() throws IOException {
+    private static ClearCacheResult clearCacheInternal(ServerCachePaths cachePaths) throws IOException {
         int deletedFiles = 0;
         int deletedDirs = 0;
 
-        Path[] cacheFiles = {MOD_CHECKSUM_FILE, CONFIG_CHECKSUM_FILE};
+        Path[] cacheFiles = {cachePaths.modChecksumFile(), cachePaths.configChecksumFile()};
         for (Path cacheFile : cacheFiles) {
             if (Files.deleteIfExists(cacheFile)) {
                 deletedFiles++;
             }
         }
 
-        Path sharedFiles = Path.of("SCS/shared-files");
-        if (Files.exists(sharedFiles)) {
-            try (var stream = Files.walk(sharedFiles).sorted(Comparator.reverseOrder())) {
+        if (Files.exists(cachePaths.sharedFilesDir())) {
+            try (var stream = Files.walk(cachePaths.sharedFilesDir()).sorted(Comparator.reverseOrder())) {
                 for (Path path : stream.toList()) {
                     if (Files.isDirectory(path)) {
                         Files.deleteIfExists(path);
@@ -200,8 +208,45 @@ public final class UpdateCoordinator {
             }
         }
 
-        Files.createDirectories(sharedFiles);
+        Files.createDirectories(cachePaths.sharedFilesDir());
         return new ClearCacheResult(deletedFiles, deletedDirs);
+    }
+
+    private static String resolveServerKey(String serverKey, String updateBaseUrl) {
+        if (serverKey != null && !serverKey.isBlank()) {
+            return serverKey;
+        }
+        if (updateBaseUrl != null && !updateBaseUrl.isBlank()) {
+            return updateBaseUrl;
+        }
+        return "default";
+    }
+
+    private static ServerCachePaths buildServerCachePaths(String serverKey) {
+        String safeServerKey = sanitizeServerKey(serverKey);
+        Path serverRoot = SERVER_CACHE_ROOT.resolve(safeServerKey);
+        Path sharedFilesDir = serverRoot.resolve("shared-files");
+        return new ServerCachePaths(
+                serverKey,
+                serverRoot,
+                sharedFilesDir,
+                sharedFilesDir.resolve(MOD_ZIP_NAME),
+                serverRoot.resolve("mods_checksums.json"),
+                sharedFilesDir.resolve(CONFIG_ZIP_NAME),
+                serverRoot.resolve("config_checksums.json")
+        );
+    }
+
+    private static String sanitizeServerKey(String serverKey) {
+        String raw = (serverKey == null || serverKey.isBlank()) ? "default" : serverKey.trim();
+        String normalized = raw.toLowerCase(Locale.ROOT).replaceAll("[^a-z0-9._-]", "_");
+        if (normalized.isBlank()) {
+            normalized = "default";
+        }
+        if (normalized.length() > 48) {
+            normalized = normalized.substring(0, 48);
+        }
+        return normalized + "_" + Integer.toHexString(raw.hashCode());
     }
 
     private static final class ClearCacheResult {
@@ -213,13 +258,69 @@ public final class UpdateCoordinator {
             this.deletedDirs = deletedDirs;
         }
     }
+    private static final class ServerCachePaths {
+        private final String serverKey;
+        private final Path serverRoot;
+        private final Path sharedFilesDir;
+        private final Path modDownloadPath;
+        private final Path modChecksumFile;
+        private final Path configDownloadPath;
+        private final Path configChecksumFile;
+
+        private ServerCachePaths(
+                String serverKey,
+                Path serverRoot,
+                Path sharedFilesDir,
+                Path modDownloadPath,
+                Path modChecksumFile,
+                Path configDownloadPath,
+                Path configChecksumFile
+        ) {
+            this.serverKey = serverKey;
+            this.serverRoot = serverRoot;
+            this.sharedFilesDir = sharedFilesDir;
+            this.modDownloadPath = modDownloadPath;
+            this.modChecksumFile = modChecksumFile;
+            this.configDownloadPath = configDownloadPath;
+            this.configChecksumFile = configChecksumFile;
+        }
+
+        private String serverKey() {
+            return serverKey;
+        }
+
+        private Path serverRoot() {
+            return serverRoot;
+        }
+
+        private Path sharedFilesDir() {
+            return sharedFilesDir;
+        }
+
+        private Path modDownloadPath() {
+            return modDownloadPath;
+        }
+
+        private Path modChecksumFile() {
+            return modChecksumFile;
+        }
+
+        private Path configDownloadPath() {
+            return configDownloadPath;
+        }
+
+        private Path configChecksumFile() {
+            return configChecksumFile;
+        }
+    }
 
     private static void performUpdateFlow(
             String updateBaseUrl,
             String modsUrl,
             Minecraft minecraft,
             DownloadProgressScreen progressScreen,
-            ExecutorService executor
+            ExecutorService executor,
+            ServerCachePaths cachePaths
     ) {
         UpdateOutcome modsOutcome = UpdateOutcome.failed();
         UpdateOutcome configOutcome = Config.updateConfig ? UpdateOutcome.failed() : UpdateOutcome.success(null);
@@ -228,6 +329,8 @@ public final class UpdateCoordinator {
         String currentModVersion = getCurrentModVersion();
 
         try {
+            Files.createDirectories(cachePaths.serverRoot());
+            Files.createDirectories(cachePaths.sharedFilesDir());
             LOGGER.info("Starting mod download from: {}", modsUrl);
 
             modsOutcome = downloadAndApplyZipUpdate(
@@ -235,9 +338,9 @@ public final class UpdateCoordinator {
                     progressScreen,
                     modsUrl,
                     "mods",
-                    MOD_DOWNLOAD_PATH,
+                    cachePaths.modDownloadPath(),
                     MOD_UNZIP_DESTINATION,
-                    MOD_CHECKSUM_FILE,
+                    cachePaths.modChecksumFile(),
                     true,
                     currentModVersion,
                     summaryExtras
@@ -249,7 +352,7 @@ public final class UpdateCoordinator {
             }
 
             if (Config.updateConfig) {
-                configOutcome = downloadConfigUpdate(updateBaseUrl, minecraft, progressScreen);
+                configOutcome = downloadConfigUpdate(updateBaseUrl, minecraft, progressScreen, cachePaths);
                 if (configOutcome.isCancelled()) {
                     cancelled = true;
                     return;
@@ -279,7 +382,8 @@ public final class UpdateCoordinator {
     private static UpdateOutcome downloadConfigUpdate(
             String updateBaseUrl,
             Minecraft minecraft,
-            DownloadProgressScreen progressScreen
+            DownloadProgressScreen progressScreen,
+            ServerCachePaths cachePaths
     ) {
         String configUrl = buildDownloadUrl(updateBaseUrl, CONFIG_ZIP_NAME);
         if (configUrl == null) {
@@ -294,9 +398,9 @@ public final class UpdateCoordinator {
                     progressScreen,
                     configUrl,
                     "config",
-                    CONFIG_DOWNLOAD_PATH,
+                    cachePaths.configDownloadPath(),
                     CONFIG_UNZIP_DESTINATION,
-                    CONFIG_CHECKSUM_FILE,
+                    cachePaths.configChecksumFile(),
                     false,
                     null,
                     null
@@ -522,6 +626,7 @@ public final class UpdateCoordinator {
         } else {
             result = Checksum.compareChecksums(targetDirectory, checksumFile, listener);
         }
+        Files.createDirectories(checksumFile.getParent());
         Checksum.saveChecksums(checksumFile, result.getNewChecksums());
         Checksum.ChecksumDiff diff = result.getDiff();
         if (filterFiles != null && !filterFiles.isEmpty()) {
@@ -1188,6 +1293,7 @@ public final class UpdateCoordinator {
         }
 
         Checksum.ChecksumResult result = Checksum.compareChecksums(checksumFile, newChecksums);
+        Files.createDirectories(checksumFile.getParent());
         Checksum.saveChecksums(checksumFile, result.getNewChecksums());
         return result.getDiff();
     }
