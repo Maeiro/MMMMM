@@ -342,6 +342,7 @@ public final class UpdateCoordinator {
                     MOD_UNZIP_DESTINATION,
                     cachePaths.modChecksumFile(),
                     true,
+                    Config.mirrorMods,
                     currentModVersion,
                     summaryExtras
             );
@@ -402,6 +403,7 @@ public final class UpdateCoordinator {
                     CONFIG_UNZIP_DESTINATION,
                     cachePaths.configChecksumFile(),
                     false,
+                    Config.mirrorConfig,
                     null,
                     null
             );
@@ -450,6 +452,7 @@ public final class UpdateCoordinator {
             Path unzipDestination,
             Path checksumFile,
             boolean syncModsById,
+            boolean mirrorMode,
             String currentModVersion,
             List<String> summaryExtras
     ) throws Exception {
@@ -479,8 +482,20 @@ public final class UpdateCoordinator {
         } else {
             extractedFiles = extractZipFile(downloadPath, unzipDestination, progressScreen, displayName, "config/");
         }
+        Set<String> mirrorAllowed = extractedFiles == null ? new HashSet<>() : new HashSet<>(extractedFiles);
+        if (mirrorMode) {
+            if (syncModsById) {
+                mirrorAllowed.addAll(getSelfJarFileNames(unzipDestination, progressScreen));
+            }
+            MirrorResult mirrorResult = mirrorDirectoryContents(unzipDestination, mirrorAllowed, progressScreen, displayName);
+            if (summaryExtras != null && mirrorResult.removedFiles > 0) {
+                summaryExtras.add("Mirror removed " + mirrorResult.removedFiles + " extra file(s) from " + displayName + ".");
+            }
+        }
         Checksum.ChecksumDiff diff;
-        if (!syncModsById) {
+        if (mirrorMode) {
+            diff = computeAndSaveChecksums(unzipDestination, checksumFile, progressScreen, displayName, null, false);
+        } else if (!syncModsById) {
             diff = computeAndSaveChecksumsFromZip(
                     downloadPath,
                     checksumFile,
@@ -635,6 +650,116 @@ public final class UpdateCoordinator {
         return diff;
     }
 
+    private static final class MirrorResult {
+        private final int removedFiles;
+
+        private MirrorResult(int removedFiles, int removedDirs) {
+            this.removedFiles = removedFiles;
+        }
+    }
+
+    private static Set<String> getSelfJarFileNames(Path modsDirectory, DownloadProgressScreen progressScreen) {
+        Map<String, List<Path>> byId = indexInstalledModsById(modsDirectory, progressScreen);
+        List<Path> selfJars = byId.get(SCS.MODID.toLowerCase(Locale.ROOT));
+        if (selfJars == null || selfJars.isEmpty()) {
+            return Collections.emptySet();
+        }
+        Set<String> names = new HashSet<>();
+        for (Path jar : selfJars) {
+            names.add(jar.getFileName().toString());
+        }
+        return names;
+    }
+
+    private static MirrorResult mirrorDirectoryContents(
+            Path destination,
+            Set<String> allowedRelativePaths,
+            DownloadProgressScreen progressScreen,
+            String displayName
+    ) throws IOException {
+        if (!Files.exists(destination)) {
+            return new MirrorResult(0, 0);
+        }
+
+        Set<String> allowed = normalizeAllowedPaths(allowedRelativePaths);
+        List<Path> files;
+        try (var stream = Files.walk(destination)) {
+            files = stream.filter(Files::isRegularFile).collect(Collectors.toList());
+        }
+
+        int total = files.size();
+        int removedFiles = 0;
+        for (int i = 0; i < total; i++) {
+            Path file = files.get(i);
+            int current = i + 1;
+            if (current == 1 || current == total || current % 20 == 0) {
+                String rel = normalizeRelativeKey(destination, file);
+                int progress = total > 0 ? (int) ((current * 100L) / total) : 0;
+                updateProcessing(progressScreen, "Mirroring " + displayName + "...", String.format("%d/%d: %s", current, total, rel), progress, total > 0);
+            }
+
+            if (progressScreen.isCancelled()) {
+                break;
+            }
+
+            String rel = normalizeRelativeKey(destination, file);
+            if (!allowed.contains(rel)) {
+                try {
+                    Files.deleteIfExists(file);
+                    removedFiles++;
+                } catch (Exception e) {
+                    LOGGER.warn("Failed to remove extra {} file: {}", displayName, file, e);
+                }
+            }
+        }
+
+        int removedDirs = 0;
+        try (var stream = Files.walk(destination).sorted(Comparator.reverseOrder())) {
+            for (Path path : stream.toList()) {
+                if (path.equals(destination) || !Files.isDirectory(path)) {
+                    continue;
+                }
+                if (isDirectoryEmpty(path)) {
+                    Files.deleteIfExists(path);
+                    removedDirs++;
+                }
+            }
+        }
+
+        return new MirrorResult(removedFiles, removedDirs);
+    }
+
+    private static boolean isDirectoryEmpty(Path directory) throws IOException {
+        try (var stream = Files.list(directory)) {
+            return stream.findAny().isEmpty();
+        }
+    }
+
+    private static Set<String> normalizeAllowedPaths(Set<String> allowed) {
+        if (allowed == null || allowed.isEmpty()) {
+            return Collections.emptySet();
+        }
+        Set<String> normalized = new HashSet<>();
+        for (String entry : allowed) {
+            String key = normalizeRelativeKey(entry);
+            if (!key.isBlank()) {
+                normalized.add(key);
+            }
+        }
+        return normalized;
+    }
+
+    private static String normalizeRelativeKey(Path root, Path file) {
+        String rel = root.relativize(file).toString();
+        return normalizeRelativeKey(rel);
+    }
+
+    private static String normalizeRelativeKey(String rel) {
+        if (rel == null) {
+            return "";
+        }
+        return rel.replace('\\', '/').toLowerCase(Locale.ROOT);
+    }
     private static Set<String> extractZipFile(
             Path zipPath,
             Path destination,

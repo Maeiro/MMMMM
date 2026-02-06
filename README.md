@@ -20,6 +20,7 @@ Key features
 - modId-based sync: avoids duplicates when the .jar filename changes.
 - Optional /config update (enabled by default).
 - Optional removal list in `mods.zip` to delete specific client jars.
+- Optional mirror mode to make client `/mods` and `/config` 1:1 with the zips.
 - Per-server cache isolation (each server has its own checksums and downloaded zips).
 - Built-in file server to host `mods.zip` and `config.zip`.
 
@@ -53,6 +54,8 @@ Config file (COMMON): `config/scs-common.toml`
 - `fileServerPort` (int): file server port.
 - `filterServerMods` (bool): excludes server-only mods from `mods.zip`.
 - `updateConfig` (bool): updates `/config` alongside `/mods` (default: true).
+- `mirrorMods` (bool): mirrors `/mods` to `mods.zip` (removes files not in the zip).
+- `mirrorConfig` (bool): mirrors `/config` to `config.zip` (removes files not in the zip).
 
 How updates work
 ----------------
@@ -62,6 +65,7 @@ How updates work
 - If `modsToRemoveFromTheClient.json` exists in `mods.zip`, any jar listed there is
   removed from `/mods` during the update.
 - If `updateConfig=true`, it also downloads `config.zip` and extracts it into `/config`.
+- If `mirrorMods` or `mirrorConfig` is enabled, files not present in the zip are removed to keep the client 1:1.
 - Update UI shows summary and details with scroll support for long change lists.
 
 Removal list format
@@ -79,6 +83,7 @@ of jar file names:
 Tips / Troubleshooting
 ----------------------
 - If `fileServerPort` changes, the file server restarts automatically.
+- If the download has no progress/ETA, the server may be missing `Content-Length`.
 - If a server URL is missing, the update flow will show a message instead of starting.
 - Use **Clear cache** to remove cached zips/checksums if something gets stuck.
 

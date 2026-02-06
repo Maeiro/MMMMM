@@ -39,6 +39,22 @@ public class Config {
             )
             .define("updateConfig", true);
 
+    private static final ModConfigSpec.ConfigValue<Boolean> MIRROR_MODS = BUILDER
+            .comment(
+                    "If true, the client mods folder will be mirrored to mods.zip.",
+                    "Any mod jar not present in mods.zip will be removed during update.",
+                    "Default: false"
+            )
+            .define("mirrorMods", false);
+
+    private static final ModConfigSpec.ConfigValue<Boolean> MIRROR_CONFIG = BUILDER
+            .comment(
+                    "If true, the client config folder will be mirrored to config.zip.",
+                    "Any config file not present in config.zip will be removed during update.",
+                    "Default: false"
+            )
+            .define("mirrorConfig", false);
+
     /**
      * Compile the final specification.
      */
@@ -46,7 +62,10 @@ public class Config {
 
     public static int fileServerPort;
     public static boolean filterServerSideMods;
+
     public static boolean updateConfig;
+    public static boolean mirrorMods;
+    public static boolean mirrorConfig;
 
     /**
      * Called when the configuration is loaded or updated. This ensures runtime
@@ -62,13 +81,18 @@ public class Config {
         // Update static values with configuration values
         fileServerPort = FILE_SERVER_PORT.get();
         filterServerSideMods = FILTER_SERVER_MODS.get();
+
         updateConfig = UPDATE_CONFIG.get();
+        mirrorMods = MIRROR_MODS.get();
+        mirrorConfig = MIRROR_CONFIG.get();
 
         // Log configuration load
         SCS.LOGGER.info("Configuration loaded:");
         SCS.LOGGER.info("File Server Port: {}", fileServerPort);
         SCS.LOGGER.info("Filter Server Mods: {}", filterServerSideMods);
         SCS.LOGGER.info("Update Config: {}", updateConfig);
+        SCS.LOGGER.info("Mirror Mods: {}", mirrorMods);
+        SCS.LOGGER.info("Mirror Config: {}", mirrorConfig);
 
         if (FMLEnvironment.dist == Dist.DEDICATED_SERVER) {
             try {
