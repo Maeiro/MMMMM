@@ -30,7 +30,7 @@ public class DownloadProgressScreen extends Screen {
     private volatile boolean processingHasProgress = false;
     private final Screen returnScreen;
     private volatile boolean showSummary = false;
-    private volatile String summaryTitle = "Update complete";
+    private volatile String summaryTitle = Component.translatable("screen.scs.update_complete").getString();
     private volatile List<String> summaryLines = Collections.emptyList();
     private volatile boolean isCancelled = false;
     private volatile List<String> detailLines = Collections.emptyList();
@@ -39,9 +39,9 @@ public class DownloadProgressScreen extends Screen {
     private Button detailsButton;
 
     public DownloadProgressScreen(String downloadLabel, String downloadSource, Screen returnScreen) {
-        super(Component.literal("Downloading Update"));
-        this.downloadLabel = downloadLabel == null || downloadLabel.isBlank() ? "files" : downloadLabel;
-        this.downloadSource = downloadSource == null || downloadSource.isBlank() ? "server" : downloadSource;
+        super(Component.translatable("screen.scs.downloading.title"));
+        this.downloadLabel = downloadLabel == null || downloadLabel.isBlank() ? Component.translatable("screen.scs.files").getString() : downloadLabel;
+        this.downloadSource = downloadSource == null || downloadSource.isBlank() ? Component.translatable("screen.scs.source.server").getString() : downloadSource;
         this.returnScreen = returnScreen;
     }
     @Override
@@ -50,20 +50,20 @@ public class DownloadProgressScreen extends Screen {
 
         int buttonY = (this.height / 2) + 50;
 
-        cancelButton = Button.builder(Component.literal("Cancel"), (button) -> {
+        cancelButton = Button.builder(Component.translatable("gui.scs.cancel"), (button) -> {
             if (!showSummary) {
                 isCancelled = true; // Signal cancellation
             }
             minecraft.execute(() -> minecraft.setScreen(returnScreen)); // Return to the previous screen
         }).bounds(0, buttonY, BUTTON_WIDTH, BUTTON_HEIGHT).build();
 
-        detailsButton = Button.builder(Component.literal("Details"), (button) -> {
+        detailsButton = Button.builder(Component.translatable("gui.scs.details"), (button) -> {
             if (!showSummary) {
                 return;
             }
             showDetails = !showDetails;
             summaryScroll = 0;
-            detailsButton.setMessage(Component.literal(showDetails ? "Summary" : "Details"));
+            detailsButton.setMessage(Component.translatable(showDetails ? "gui.scs.summary" : "gui.scs.details"));
         }).bounds(0, buttonY, BUTTON_WIDTH, BUTTON_HEIGHT).build();
 
         this.addRenderableWidget(cancelButton);
@@ -83,8 +83,8 @@ public class DownloadProgressScreen extends Screen {
      * Resets the UI for a new download.
      */
     public void startNewDownload(String downloadLabel, String downloadSource) {
-        this.downloadLabel = downloadLabel == null || downloadLabel.isBlank() ? "files" : downloadLabel;
-        this.downloadSource = downloadSource == null || downloadSource.isBlank() ? "server" : downloadSource;
+        this.downloadLabel = downloadLabel == null || downloadLabel.isBlank() ? Component.translatable("screen.scs.files").getString() : downloadLabel;
+        this.downloadSource = downloadSource == null || downloadSource.isBlank() ? Component.translatable("screen.scs.source.server").getString() : downloadSource;
         this.progress = 0;
         this.downloadSpeed = "0 KB/s";
         this.estimatedTimeRemaining = "";
@@ -94,18 +94,18 @@ public class DownloadProgressScreen extends Screen {
         this.processingProgress = 0;
         this.processingHasProgress = false;
         this.showSummary = false;
-        this.summaryTitle = "Update complete";
+        this.summaryTitle = Component.translatable("screen.scs.update_complete").getString();
         this.summaryLines = Collections.emptyList();
         this.detailLines = Collections.emptyList();
         this.showDetails = false;
         this.summaryScroll = 0;
         if (cancelButton != null) {
-            cancelButton.setMessage(Component.literal("Cancel"));
+            cancelButton.setMessage(Component.translatable("gui.scs.cancel"));
         }
         if (detailsButton != null) {
             detailsButton.visible = false;
             detailsButton.active = false;
-            detailsButton.setMessage(Component.literal("Details"));
+            detailsButton.setMessage(Component.translatable("gui.scs.details"));
         }
 
         layoutButtons();
@@ -129,7 +129,7 @@ public class DownloadProgressScreen extends Screen {
      * Shows extraction info including last download speed.
      */
     public void startExtraction(String extractionMessage) {
-        startProcessing(extractionMessage, "Last download speed: " + downloadSpeed);
+        startProcessing(extractionMessage, Component.translatable("screen.scs.last_speed", downloadSpeed).getString());
     }
 
     public void startProcessing(String title, String detail) {
@@ -150,7 +150,7 @@ public class DownloadProgressScreen extends Screen {
 
     public void showSummary(String title, List<String> summaryLines, List<String> detailLines) {
         this.showSummary = true;
-        this.summaryTitle = title == null || title.isBlank() ? "Update complete" : title;
+        this.summaryTitle = title == null || title.isBlank() ? Component.translatable("screen.scs.update_complete").getString() : title;
         this.summaryLines = normalizeLines(summaryLines);
         this.detailLines = normalizeLines(detailLines);
         this.showDetails = false;
@@ -160,13 +160,13 @@ public class DownloadProgressScreen extends Screen {
         this.processingDetail = "";
         this.progress = 100;
         if (cancelButton != null) {
-            cancelButton.setMessage(Component.literal("Close"));
+            cancelButton.setMessage(Component.translatable("gui.scs.close"));
         }
         if (detailsButton != null) {
             boolean hasDetails = !this.detailLines.isEmpty();
             detailsButton.visible = hasDetails;
             detailsButton.active = hasDetails;
-            detailsButton.setMessage(Component.literal("Details"));
+            detailsButton.setMessage(Component.translatable("gui.scs.details"));
         }
 
         layoutButtons();
@@ -192,7 +192,7 @@ public class DownloadProgressScreen extends Screen {
     }
 
     private void renderDownloadProgress(GuiGraphics guiGraphics) {
-        guiGraphics.drawCenteredString(this.font, "Downloading " + downloadLabel + " from " + downloadSource, this.width / 2, 20, 0xFFFFFF);
+        guiGraphics.drawCenteredString(this.font, Component.translatable("screen.scs.downloading.from", downloadLabel, downloadSource), this.width / 2, 20, 0xFFFFFF);
 
         int barWidth = 200;
         int barHeight = 20;
@@ -201,7 +201,7 @@ public class DownloadProgressScreen extends Screen {
 
         guiGraphics.drawCenteredString(this.font, downloadSpeed, this.width / 2, barY - 30, 0xFFFFFF);
         if (!estimatedTimeRemaining.isEmpty()) {
-            guiGraphics.drawCenteredString(this.font, "ETA: " + estimatedTimeRemaining, this.width / 2, barY - 55, 0xFFFFFF);
+            guiGraphics.drawCenteredString(this.font, Component.translatable("screen.scs.eta", estimatedTimeRemaining), this.width / 2, barY - 55, 0xFFFFFF);
         }
 
         guiGraphics.fill(barX, barY, barX + barWidth, barY + barHeight, 0xFFAAAAAA);
@@ -214,7 +214,7 @@ public class DownloadProgressScreen extends Screen {
 
     private void renderProcessing(GuiGraphics guiGraphics) {
         String title = processingTitle == null || processingTitle.isBlank()
-                ? "Processing update..."
+                ? Component.translatable("screen.scs.processing").getString()
                 : processingTitle;
         guiGraphics.drawCenteredString(this.font, title, this.width / 2, 20, 0xFFFFFF);
 
@@ -240,7 +240,7 @@ public class DownloadProgressScreen extends Screen {
 
     private void renderSummary(GuiGraphics guiGraphics) {
         guiGraphics.drawCenteredString(this.font, summaryTitle, this.width / 2, 20, 0xFFFFFF);
-        String modeLabel = showDetails ? "Details" : "Summary";
+        Component modeLabel = Component.translatable(showDetails ? "gui.scs.details" : "gui.scs.summary");
         guiGraphics.drawCenteredString(this.font, modeLabel, this.width / 2, 36, 0xA0A0A0);
 
         List<String> lines = showDetails ? detailLines : summaryLines;
@@ -256,7 +256,7 @@ public class DownloadProgressScreen extends Screen {
         summaryScroll = Math.min(summaryScroll, maxScroll);
 
         if (wrappedLines.isEmpty()) {
-            guiGraphics.drawCenteredString(this.font, "No details available.", this.width / 2, top, 0xFFFFFF);
+            guiGraphics.drawCenteredString(this.font, Component.translatable("screen.scs.no_details"), this.width / 2, top, 0xFFFFFF);
             return;
         }
 
@@ -341,3 +341,6 @@ public class DownloadProgressScreen extends Screen {
         guiGraphics.fill(x, thumbY, x + SCROLLBAR_WIDTH, thumbY + thumbHeight, 0xC0FFFFFF);
     }
 }
+
+
+
